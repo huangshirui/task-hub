@@ -1,0 +1,9 @@
+{
+  "name": "builtin-python",
+  "version": "0.1.0",
+  "taskTypes": ["python"],
+  "platforms": ["linux", "windows", "darwin"],
+  "capabilities": ["python.registered_functions"],
+  "entrypoint": "taskhub_runner.handlers:PythonHandler",
+  "timeoutMaxSeconds": 3600
+}

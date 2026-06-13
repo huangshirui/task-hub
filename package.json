@@ -1,0 +1,17 @@
+{
+  "name": "task-hub",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test:worker": "npm.cmd run build && node --test dist/tests/worker/*.test.js",
+    "test:runner": "set PYTHONPATH=runner&& python -m unittest discover -s runner/tests -p \"test_*.py\"",
+    "test": "npm.cmd run test:worker && npm.cmd run test:runner"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260609.0",
+    "@types/node": "^25.9.3",
+    "typescript": "^5.9.3"
+  }
+}

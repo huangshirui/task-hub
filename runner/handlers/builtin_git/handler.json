@@ -1,0 +1,9 @@
+{
+  "name": "builtin-git",
+  "version": "0.1.0",
+  "taskTypes": ["git"],
+  "platforms": ["linux", "windows", "darwin"],
+  "capabilities": ["git.safe_operations"],
+  "entrypoint": "taskhub_runner.handlers:GitHandler",
+  "timeoutMaxSeconds": 3600
+}

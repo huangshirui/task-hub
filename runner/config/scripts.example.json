@@ -1,0 +1,5 @@
+{
+  "hello": {
+    "command": ["python", "-c", "print('hello from task-hub runner')"]
+  }
+}

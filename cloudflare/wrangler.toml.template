@@ -1,0 +1,24 @@
+name = "{{CF_WORKER_NAME}}"
+main = "src/worker/index.ts"
+compatibility_date = "{{CF_COMPATIBILITY_DATE}}"
+
+[[queues.producers]]
+queue = "{{CF_QUEUE_NAME}}"
+binding = "TASK_SUBMISSIONS"
+
+[[queues.consumers]]
+queue = "{{CF_QUEUE_NAME}}"
+
+[[d1_databases]]
+binding = "TASK_DB"
+database_name = "{{CF_D1_DATABASE_NAME}}"
+database_id = "{{CF_D1_DATABASE_ID}}"
+migrations_dir = "cloudflare/migrations"
+
+[[r2_buckets]]
+binding = "TASK_OBJECTS"
+bucket_name = "{{CF_R2_BUCKET_NAME}}"
+
+[[kv_namespaces]]
+binding = "TASK_CACHE"
+id = "{{CF_KV_NAMESPACE_ID}}"

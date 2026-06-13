@@ -1,0 +1,9 @@
+{
+  "name": "builtin-shell",
+  "version": "1.0.0",
+  "taskTypes": ["shell"],
+  "platforms": ["linux", "windows", "darwin"],
+  "capabilities": ["shell.registered_scripts"],
+  "entrypoint": "taskhub_runner.handlers:ShellHandler",
+  "timeoutMaxSeconds": 3600
+}
