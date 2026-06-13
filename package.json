@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test:worker": "npm.cmd run build && node --test dist/tests/worker/*.test.js",
-    "test:runner": "set PYTHONPATH=runner&& python -m unittest discover -s runner/tests -p \"test_*.py\"",
-    "test": "npm.cmd run test:worker && npm.cmd run test:runner"
+    "test:worker": "npm run build && node --test dist/tests/worker/*.test.js",
+    "test:runner": "python runner/run_tests.py",
+    "test": "npm run test:worker && npm run test:runner"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260609.0",
