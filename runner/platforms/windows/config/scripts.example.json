@@ -1,0 +1,5 @@
+{
+  "hello": {
+    "command": ["powershell.exe", "-NoProfile", "-Command", "Write-Output 'hello from task-hub windows runner'"]
+  }
+}

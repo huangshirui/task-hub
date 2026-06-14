@@ -1,0 +1,9 @@
+{
+  "baseUrl": "https://task-hub.example.workers.dev",
+  "runnerId": "runner_windows_dev",
+  "credentialEnv": "TASK_HUB_RUNNER_TOKEN",
+  "workspaceRoot": "../../../runner-workspaces/windows",
+  "pollIntervalSeconds": 5,
+  "handlerPaths": ["../../../handlers/builtin_shell"],
+  "scriptRegistryPath": "scripts.example.json"
+}

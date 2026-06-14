@@ -32,7 +32,7 @@ def load_runner_config(path: Path) -> RunnerConfig:
         resolved = Path(handler_path)
         if not resolved.is_absolute():
             resolved = base_dir / resolved
-        handler_paths.append(resolved)
+        handler_paths.append(resolved.resolve())
 
     script_registry_path = raw.get("scriptRegistryPath")
     resolved_script_registry_path = None
@@ -40,6 +40,7 @@ def load_runner_config(path: Path) -> RunnerConfig:
         resolved_script_registry_path = Path(script_registry_path)
         if not resolved_script_registry_path.is_absolute():
             resolved_script_registry_path = base_dir / resolved_script_registry_path
+        resolved_script_registry_path = resolved_script_registry_path.resolve()
 
     return RunnerConfig(
         base_url=_required_string(raw, "baseUrl"),
