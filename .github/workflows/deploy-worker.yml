@@ -4,6 +4,14 @@ on:
   push:
     branches:
       - main
+    paths:
+      - ".github/workflows/deploy-worker.yml"
+      - "src/worker/**"
+      - "tests/worker/**"
+      - "cloudflare/**"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
   workflow_dispatch:
 
 jobs:
