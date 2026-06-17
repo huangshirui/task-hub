@@ -6,7 +6,13 @@ Ubuntu one-line installs enable only the built-in `selfcheck` handler by default
 
 ## Runner Config
 
-`runner/config/runner.json` defines:
+Each runner instance has its own `runner.json`. For example:
+
+- Ubuntu one-line install: `/etc/task-hub/runners/<account>/runner.json`
+- Windows per-user setup: `%LOCALAPPDATA%\TaskHubRunner\runner.json`
+- local development: `runner/config/runner.json`
+
+The config defines:
 
 - `baseUrl`: Cloudflare Worker URL
 - `runnerId`: registered Runner ID
@@ -55,18 +61,31 @@ Use it to verify that a new runner is online before installing task-specific han
 
 Committed handler catalog entries live under `runner/handlers/<handler-name>`.
 
-Ubuntu handler installs copy catalog entries into:
+Ubuntu handler installs copy catalog entries into the target account's private managed directory:
 
 ```text
-/opt/task-hub/runner/installed-handlers/<handler-name>
+/var/lib/task-hub/runners/<account>/installed-handlers/<handler-name>
 ```
 
-Then the installer adds that managed directory to `runner/config/runner.json` `handlerPaths`, re-registers the runner task types and capabilities with the Worker, and restarts the systemd service.
+Then the installer adds that managed directory to `/etc/task-hub/runners/<account>/runner.json` `handlerPaths`, re-registers that runner account's task types and capabilities with the Worker, and restarts `taskhub-runner@<account>.service`.
 
 Install the registered-script shell handler:
 
 ```bash
-sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell
+sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh --account taskhub shell
+sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh --account alice shell
+```
+
+Windows handler installs run as the current Windows user and copy catalog entries into:
+
+```text
+%LOCALAPPDATA%\TaskHubRunner\installed-handlers\<handler-name>
+```
+
+Install the registered-script shell handler for the current Windows user:
+
+```powershell
+taskhub-windows-runner.exe install-handler shell
 ```
 
 Only implemented handlers are installable. v1 allows `shell`; `python` and `git` remain disabled until their Python handler classes exist.

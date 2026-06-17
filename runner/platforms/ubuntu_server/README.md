@@ -9,20 +9,30 @@ Install the runner as a `systemd` service:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo bash -s -- \
   --base-url https://your-worker.workers.dev \
+  --account taskhub \
   --runner-id runner_ubuntu_01
 ```
 
-The installer prompts for `TASK_HUB_REGISTRATION_TOKEN`, registers the runner with the Worker, generates a runner credential, and writes it to `/etc/task-hub/runner.env`. The default install only enables the `selfcheck` handler.
+The installer prompts for `TASK_HUB_REGISTRATION_TOKEN`, registers the runner with the Worker, generates a runner credential, and writes it to `/etc/task-hub/runners/<account>/runner.env`. The default install only enables the `selfcheck` handler.
 
 The installer:
 
 - installs `git` and `python3`
-- creates the `taskhub` system user
+- creates the local account system user
 - clones or updates the repo at `/opt/task-hub`
 - registers the runner with the Worker for `selfcheck`
-- writes `runner/config/runner.json`
-- stores the runner credential in `/etc/task-hub/runner.env`
-- creates and starts `taskhub-runner.service`
+- writes `/etc/task-hub/runners/<account>/runner.json`
+- stores the runner credential in `/etc/task-hub/runners/<account>/runner.env`
+- creates and starts `taskhub-runner@<account>.service`
+
+Install another account on the same server by changing `--account` and `--runner-id`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo bash -s -- \
+  --base-url https://your-worker.workers.dev \
+  --account alice \
+  --runner-id runner_alice
+```
 
 For an auditable install, download the script first:
 
@@ -31,6 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/pl
 less install.sh
 sudo bash install.sh \
   --base-url https://your-worker.workers.dev \
+  --account taskhub \
   --runner-id runner_ubuntu_01
 ```
 
@@ -41,6 +52,7 @@ For non-interactive automation, pass the registration token through the command 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo TASK_HUB_REGISTRATION_TOKEN='replace-with-registration-secret' bash -s -- \
   --base-url https://your-worker.workers.dev \
+  --account taskhub \
   --runner-id runner_ubuntu_01
 ```
 
@@ -49,6 +61,7 @@ To skip cloud registration and use a pre-registered runner credential:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo TASK_HUB_RUNNER_TOKEN='replace-with-runner-secret' bash -s -- \
   --base-url https://your-worker.workers.dev \
+  --account taskhub \
   --runner-id runner_ubuntu_01 \
   --no-register
 ```
@@ -56,7 +69,7 @@ curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/pl
 View logs after installation:
 
 ```bash
-journalctl -u taskhub-runner -f
+journalctl -u taskhub-runner@taskhub -f
 ```
 
 ## Install handlers
@@ -64,22 +77,22 @@ journalctl -u taskhub-runner -f
 The default runner only accepts `selfcheck` tasks. Install additional handlers on demand:
 
 ```bash
-sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell
+sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh --account taskhub shell
 ```
 
-The handler installer copies the trusted catalog handler from `/opt/task-hub/runner/handlers` into `/opt/task-hub/runner/installed-handlers`, updates `runner/config/runner.json`, re-registers the runner with the Worker, and restarts `taskhub-runner`.
+The handler installer copies the trusted catalog handler from `/opt/task-hub/runner/handlers` into `/var/lib/task-hub/runners/<account>/installed-handlers`, updates `/etc/task-hub/runners/<account>/runner.json`, re-registers the runner with the Worker, and restarts `taskhub-runner@<account>`.
 
 For automation:
 
 ```bash
 sudo TASK_HUB_REGISTRATION_TOKEN='replace-with-registration-secret' \
-  /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell
+  /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh --account taskhub shell
 ```
 
 To only update local config without cloud re-registration:
 
 ```bash
-sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell --no-register
+sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh --account taskhub shell --no-register
 ```
 
 ## Install from source
@@ -90,7 +103,7 @@ Use a fixed install path so the service file can reference stable absolute paths
 sudo apt-get update
 sudo apt-get install -y git python3
 
-sudo useradd --system --create-home --shell /usr/sbin/nologin taskhub
+sudo useradd --system --create-home --user-group --shell /usr/sbin/nologin taskhub
 sudo mkdir -p /opt/task-hub
 sudo chown "$USER":"$USER" /opt/task-hub
 git clone https://github.com/huangshirui/task-hub.git /opt/task-hub
@@ -134,42 +147,42 @@ export PYTHONPATH=/opt/task-hub/runner
 python3 -m taskhub_runner.cli --config runner/config/runner.json
 ```
 
-## Install systemd service
+## Install systemd template service
 
-Store the runner credential outside the repository:
+Store each runner credential outside the repository:
 
 ```bash
-sudo mkdir -p /etc/task-hub
-sudo tee /etc/task-hub/runner.env >/dev/null <<'EOF'
+sudo mkdir -p /etc/task-hub/runners/alice
+sudo tee /etc/task-hub/runners/alice/runner.env >/dev/null <<'EOF'
 TASK_HUB_RUNNER_TOKEN=replace-with-runner-secret
 EOF
-sudo chmod 600 /etc/task-hub/runner.env
-sudo chown root:root /etc/task-hub/runner.env
+sudo chmod 600 /etc/task-hub/runners/alice/runner.env
+sudo chown root:root /etc/task-hub/runners/alice/runner.env
 ```
 
-Allow the service account to read the app and write runner workspaces:
+Allow the account to write its own runner state:
 
 ```bash
-sudo mkdir -p /opt/task-hub/runner-workspaces
-sudo chown -R taskhub:taskhub /opt/task-hub
+sudo mkdir -p /var/lib/task-hub/runners/alice/workspaces
+sudo mkdir -p /var/lib/task-hub/runners/alice/installed-handlers
+sudo chown -R alice: /var/lib/task-hub/runners/alice
 ```
 
-Create `/etc/systemd/system/taskhub-runner.service`:
+Create `/etc/systemd/system/taskhub-runner@.service`:
 
 ```ini
 [Unit]
-Description=Task Hub Ubuntu Runner
+Description=Task Hub Ubuntu Runner (%i)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=taskhub
-Group=taskhub
+User=%i
 WorkingDirectory=/opt/task-hub
-EnvironmentFile=/etc/task-hub/runner.env
+EnvironmentFile=/etc/task-hub/runners/%i/runner.env
 Environment=PYTHONPATH=/opt/task-hub/runner
-ExecStart=/usr/bin/python3 -m taskhub_runner.cli --config /opt/task-hub/runner/config/runner.json
+ExecStart=/usr/bin/python3 -m taskhub_runner.cli --config /etc/task-hub/runners/%i/runner.json
 Restart=always
 RestartSec=5
 
@@ -181,19 +194,19 @@ Enable and start the service:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now taskhub-runner
-sudo systemctl status taskhub-runner
+sudo systemctl enable --now taskhub-runner@alice
+sudo systemctl status taskhub-runner@alice
 ```
 
 View logs:
 
 ```bash
-journalctl -u taskhub-runner -f
+journalctl -u taskhub-runner@alice -f
 ```
 
 Stop or restart:
 
 ```bash
-sudo systemctl stop taskhub-runner
-sudo systemctl restart taskhub-runner
+sudo systemctl stop taskhub-runner@alice
+sudo systemctl restart taskhub-runner@alice
 ```

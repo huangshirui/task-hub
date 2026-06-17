@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_URL="https://github.com/huangshirui/task-hub.git"
 BRANCH="main"
 INSTALL_DIR="/opt/task-hub"
-SERVICE_USER="taskhub"
+ACCOUNT="taskhub"
 SERVICE_NAME="taskhub-runner"
 BASE_URL=""
 RUNNER_ID=""
@@ -29,7 +29,8 @@ Options:
   --repo-url URL       Git repository URL. Defaults to the upstream task-hub repo.
   --branch NAME        Git branch to install. Defaults to main.
   --install-dir PATH   Install path. Defaults to /opt/task-hub.
-  --service-user USER  System user for the service. Defaults to taskhub.
+  --account NAME       Local Linux account and runner instance name. Defaults to taskhub.
+  --service-user USER  Alias for --account.
   --help              Show this help.
 EOF
 }
@@ -84,9 +85,14 @@ while [[ $# -gt 0 ]]; do
       INSTALL_DIR="$2"
       shift 2
       ;;
+    --account)
+      need_value "$@"
+      ACCOUNT="$2"
+      shift 2
+      ;;
     --service-user)
       need_value "$@"
-      SERVICE_USER="$2"
+      ACCOUNT="$2"
       shift 2
       ;;
     --help|-h)
@@ -102,6 +108,7 @@ done
 [[ "$(id -u)" -eq 0 ]] || die "run this installer as root, for example: curl -fsSL URL | sudo bash -s -- ..."
 [[ -n "$BASE_URL" ]] || die "--base-url is required"
 [[ -n "$RUNNER_ID" ]] || die "--runner-id is required"
+[[ "$ACCOUNT" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || die "--account must be a valid Linux account name"
 [[ "$INSTALL_DIR" = /* ]] || die "--install-dir must be an absolute path"
 
 if command -v apt-get >/dev/null 2>&1; then
@@ -113,8 +120,8 @@ else
   command -v python3 >/dev/null 2>&1 || die "python3 is required"
 fi
 
-if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
-  useradd --system --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+if ! id -u "$ACCOUNT" >/dev/null 2>&1; then
+  useradd --system --create-home --user-group --shell /usr/sbin/nologin "$ACCOUNT"
 fi
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
@@ -128,15 +135,15 @@ else
   git clone --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
 fi
 
-CONFIG_DIR="$INSTALL_DIR/runner/config"
+CONFIG_DIR="/etc/task-hub/runners/$ACCOUNT"
 CONFIG_PATH="$CONFIG_DIR/runner.json"
 SCRIPTS_PATH="$CONFIG_DIR/scripts.json"
-WORKSPACE_DIR="$INSTALL_DIR/runner-workspaces"
-ENV_DIR="/etc/task-hub"
-ENV_PATH="$ENV_DIR/runner.env"
-SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
+WORKSPACE_DIR="/var/lib/task-hub/runners/$ACCOUNT/workspaces"
+INSTALLED_DIR="/var/lib/task-hub/runners/$ACCOUNT/installed-handlers"
+ENV_PATH="/etc/task-hub/runners/$ACCOUNT/runner.env"
+SERVICE_PATH="/etc/systemd/system/taskhub-runner@.service"
 
-mkdir -p "$CONFIG_DIR" "$WORKSPACE_DIR" "$ENV_DIR"
+mkdir -p "$CONFIG_DIR" "$WORKSPACE_DIR" "$INSTALLED_DIR"
 
 if [[ -z "$TOKEN" && -n "${TASK_HUB_RUNNER_TOKEN:-}" ]]; then
   TOKEN="$TASK_HUB_RUNNER_TOKEN"
@@ -209,7 +216,7 @@ except error.HTTPError as exc:
 PY
 fi
 
-python3 - "$CONFIG_PATH" "$BASE_URL" "$RUNNER_ID" <<'PY'
+python3 - "$CONFIG_PATH" "$BASE_URL" "$RUNNER_ID" "$WORKSPACE_DIR" "$INSTALL_DIR" "$SCRIPTS_PATH" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -217,20 +224,23 @@ from pathlib import Path
 path = Path(sys.argv[1])
 base_url = sys.argv[2]
 runner_id = sys.argv[3]
+workspace_dir = sys.argv[4]
+install_dir = Path(sys.argv[5])
+scripts_path = sys.argv[6]
 config = {
     "baseUrl": base_url,
     "runnerId": runner_id,
     "credentialEnv": "TASK_HUB_RUNNER_TOKEN",
-    "workspaceRoot": "../../runner-workspaces",
+    "workspaceRoot": workspace_dir,
     "pollIntervalSeconds": 5,
-    "handlerPaths": ["../handlers/builtin_selfcheck"],
-    "scriptRegistryPath": "scripts.json",
+    "handlerPaths": [str(install_dir / "runner" / "handlers" / "builtin_selfcheck")],
+    "scriptRegistryPath": scripts_path,
 }
 path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 PY
 
 if [[ ! -f "$SCRIPTS_PATH" ]]; then
-  cp "$CONFIG_DIR/scripts.example.json" "$SCRIPTS_PATH"
+  cp "$INSTALL_DIR/runner/config/scripts.example.json" "$SCRIPTS_PATH"
 fi
 
 cat >"$ENV_PATH" <<EOF
@@ -239,22 +249,21 @@ EOF
 chmod 600 "$ENV_PATH"
 chown root:root "$ENV_PATH"
 
-chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+chown -R "$ACCOUNT:" "/var/lib/task-hub/runners/$ACCOUNT"
 
 cat >"$SERVICE_PATH" <<EOF
 [Unit]
-Description=Task Hub Ubuntu Runner
+Description=Task Hub Ubuntu Runner (%i)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=$SERVICE_USER
-Group=$SERVICE_USER
+User=%i
 WorkingDirectory=$INSTALL_DIR
-EnvironmentFile=$ENV_PATH
+EnvironmentFile=/etc/task-hub/runners/%i/runner.env
 Environment=PYTHONPATH=$INSTALL_DIR/runner
-ExecStart=/usr/bin/python3 -m taskhub_runner.cli --config $CONFIG_PATH
+ExecStart=/usr/bin/python3 -m taskhub_runner.cli --config /etc/task-hub/runners/%i/runner.json
 Restart=always
 RestartSec=5
 
@@ -263,9 +272,9 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now "$SERVICE_NAME"
+systemctl enable --now "$SERVICE_NAME@$ACCOUNT"
 
 echo "Task Hub runner installed."
-echo "Service: $SERVICE_NAME"
+echo "Service: $SERVICE_NAME@$ACCOUNT"
 echo "Config: $CONFIG_PATH"
-echo "Logs: journalctl -u $SERVICE_NAME -f"
+echo "Logs: journalctl -u $SERVICE_NAME@$ACCOUNT -f"

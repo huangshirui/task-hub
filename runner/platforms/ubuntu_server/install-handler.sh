@@ -2,7 +2,7 @@
 set -euo pipefail
 
 INSTALL_DIR="/opt/task-hub"
-SERVICE_NAME="taskhub-runner"
+ACCOUNT="taskhub"
 HANDLER=""
 REGISTRATION_TOKEN=""
 NO_REGISTER=0
@@ -12,13 +12,13 @@ usage() {
 Install a Task Hub runner handler.
 
 Usage:
-  sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell [options]
+  sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh [options] shell
 
 Options:
   --registration-token TOKEN  Admin token allowed to register runners. Prefer the prompt or TASK_HUB_REGISTRATION_TOKEN.
   --no-register              Skip cloud re-registration and only update local runner config.
   --install-dir PATH         Install path. Defaults to /opt/task-hub.
-  --service-name NAME        systemd service name. Defaults to taskhub-runner.
+  --account NAME             Local Linux account and runner instance name. Defaults to taskhub.
   --help                     Show this help.
 EOF
 }
@@ -48,9 +48,9 @@ while [[ $# -gt 0 ]]; do
       INSTALL_DIR="$2"
       shift 2
       ;;
-    --service-name)
+    --account)
       need_value "$@"
-      SERVICE_NAME="$2"
+      ACCOUNT="$2"
       shift 2
       ;;
     --help|-h)
@@ -70,12 +70,13 @@ done
 
 [[ "$(id -u)" -eq 0 ]] || die "run this installer as root"
 [[ -n "$HANDLER" ]] || die "handler name is required"
+[[ "$ACCOUNT" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || die "--account must be a valid Linux account name"
 [[ "$INSTALL_DIR" = /* ]] || die "--install-dir must be an absolute path"
 
-CONFIG_PATH="$INSTALL_DIR/runner/config/runner.json"
-ENV_PATH="/etc/task-hub/runner.env"
+CONFIG_PATH="/etc/task-hub/runners/$ACCOUNT/runner.json"
+ENV_PATH="/etc/task-hub/runners/$ACCOUNT/runner.env"
 CATALOG_DIR="$INSTALL_DIR/runner/handlers"
-INSTALLED_DIR="$INSTALL_DIR/runner/installed-handlers"
+INSTALLED_DIR="/var/lib/task-hub/runners/$ACCOUNT/installed-handlers"
 
 # Calls taskhub_runner.handler_installer.install_handler.
 PYTHONPATH="$INSTALL_DIR/runner" python3 -m taskhub_runner.handler_installer install "$HANDLER" \
@@ -152,5 +153,5 @@ except error.HTTPError as exc:
 PY
 fi
 
-systemctl restart "$SERVICE_NAME"
+systemctl restart "taskhub-runner@$ACCOUNT"
 echo "Handler $HANDLER installed."

@@ -18,13 +18,27 @@ class UbuntuInstallerTest(unittest.TestCase):
         self.assertIn('"labels": ["ubuntu-server"]', content)
         self.assertIn('"taskTypes": ["selfcheck"]', content)
         self.assertIn('"capabilities": ["runner.selfcheck"]', content)
-        self.assertIn('../handlers/builtin_selfcheck', content)
+        self.assertIn('handlerPaths": [str(install_dir / "runner" / "handlers" / "builtin_selfcheck")]', content)
 
     def test_installer_supports_manual_registration_fallback(self):
         content = INSTALLER.read_text(encoding="utf-8")
 
         self.assertIn("--no-register", content)
         self.assertIn("NO_REGISTER", content)
+
+    def test_installer_uses_account_scoped_paths_and_template_service(self):
+        content = INSTALLER.read_text(encoding="utf-8")
+
+        self.assertIn('ACCOUNT="taskhub"', content)
+        self.assertIn("--account", content)
+        self.assertIn('CONFIG_DIR="/etc/task-hub/runners/$ACCOUNT"', content)
+        self.assertIn('CONFIG_PATH="$CONFIG_DIR/runner.json"', content)
+        self.assertIn('ENV_PATH="/etc/task-hub/runners/$ACCOUNT/runner.env"', content)
+        self.assertIn('/var/lib/task-hub/runners/$ACCOUNT/workspaces', content)
+        self.assertIn('/var/lib/task-hub/runners/$ACCOUNT/installed-handlers', content)
+        self.assertIn('taskhub-runner@.service', content)
+        self.assertIn('$SERVICE_NAME@$ACCOUNT', content)
+        self.assertIn("User=%i", content)
 
     def test_readme_documents_registration_token_not_runner_token_for_one_line_install(self):
         content = README.read_text(encoding="utf-8")
@@ -38,9 +52,13 @@ class UbuntuInstallerTest(unittest.TestCase):
         content = HANDLER_INSTALLER.read_text(encoding="utf-8")
 
         self.assertIn("install_handler", content)
+        self.assertIn('ACCOUNT="taskhub"', content)
+        self.assertIn("--account", content)
         self.assertIn("TASK_HUB_REGISTRATION_TOKEN", content)
         self.assertIn("/runners/register", content)
-        self.assertIn("systemctl restart", content)
+        self.assertIn('/etc/task-hub/runners/$ACCOUNT/runner.json', content)
+        self.assertIn('/var/lib/task-hub/runners/$ACCOUNT/installed-handlers', content)
+        self.assertIn('systemctl restart "taskhub-runner@$ACCOUNT"', content)
         self.assertIn("--no-register", content)
 
 

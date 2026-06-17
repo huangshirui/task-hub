@@ -1,19 +1,63 @@
 # Windows Runner MVP
 
-The Windows runner host is a system tray app that starts the shared Python runner core in a background thread.
+The Windows runner host is a per-user system tray app. Each Windows login account runs its own runner process, config, credential, workspaces, installed handlers, and logs.
 
-## Run from source
+## Per-user setup
+
+Install dependencies for source runs:
 
 ```powershell
-copy runner\platforms\windows\config\runner.example.json runner\platforms\windows\config\runner.json
-copy runner\platforms\windows\config\scripts.example.json runner\platforms\windows\config\scripts.json
-set TASK_HUB_RUNNER_TOKEN=replace-with-runner-secret
 python -m pip install -r runner\platforms\windows\requirements.txt
+```
+
+Set up the current Windows user:
+
+```powershell
 set PYTHONPATH=runner
-python -m taskhub_runner.platforms.windows.tray --config runner\platforms\windows\config\runner.json
+set TASK_HUB_RUNNER_TOKEN=replace-with-runner-secret
+set TASK_HUB_REGISTRATION_TOKEN=replace-with-registration-secret
+python -m taskhub_runner.platforms.windows.tray setup --base-url https://your-worker.workers.dev --runner-id runner_windows_alice
+```
+
+The setup command writes:
+
+- `%LOCALAPPDATA%\TaskHubRunner\runner.json`
+- `%LOCALAPPDATA%\TaskHubRunner\runner.env`
+- `%LOCALAPPDATA%\TaskHubRunner\workspaces`
+- `%LOCALAPPDATA%\TaskHubRunner\installed-handlers`
+- `%LOCALAPPDATA%\TaskHubRunner\logs`
+
+It registers the runner with only the `selfcheck` handler enabled.
+
+## Run tray
+
+Run with the current user's default config:
+
+```powershell
+set PYTHONPATH=runner
+set TASK_HUB_RUNNER_TOKEN=replace-with-runner-secret
+python -m taskhub_runner.platforms.windows.tray
 ```
 
 The tray menu exposes status, start, stop, open logs, and exit.
+
+You can still override the config path:
+
+```powershell
+python -m taskhub_runner.platforms.windows.tray --config C:\path\to\runner.json
+```
+
+## Install handlers
+
+Install the shell handler for the current Windows user:
+
+```powershell
+set PYTHONPATH=runner
+set TASK_HUB_REGISTRATION_TOKEN=replace-with-registration-secret
+python -m taskhub_runner.platforms.windows.tray install-handler shell
+```
+
+The handler installer copies the trusted catalog handler into `%LOCALAPPDATA%\TaskHubRunner\installed-handlers`, updates the current user's `runner.json`, and re-registers the runner capabilities with the Worker.
 
 ## Build exe
 

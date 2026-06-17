@@ -83,6 +83,44 @@ class HandlerInstallerTest(unittest.TestCase):
                     platform="linux",
                 )
 
+    def test_install_handler_isolated_by_install_dir_and_config(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            catalog = root / "catalog"
+            catalog_handler = catalog / "builtin_shell"
+            catalog_handler.mkdir(parents=True)
+            catalog_handler.joinpath("handler.json").write_text(
+                json.dumps(
+                    {
+                        "name": "builtin-shell",
+                        "version": "1.0.0",
+                        "taskTypes": ["shell"],
+                        "platforms": ["linux", "windows", "darwin"],
+                        "capabilities": ["shell.registered_scripts"],
+                        "entrypoint": "taskhub_runner.handlers:ShellHandler",
+                        "timeoutMaxSeconds": 3600,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            alice_config = root / "alice.json"
+            bob_config = root / "bob.json"
+            alice_config.write_text('{"handlerPaths": []}', encoding="utf-8")
+            bob_config.write_text('{"handlerPaths": []}', encoding="utf-8")
+
+            install_handler(
+                "shell",
+                catalog_dir=catalog,
+                install_dir=root / "alice" / "installed-handlers",
+                config_path=alice_config,
+                platform="linux",
+            )
+
+            alice = json.loads(alice_config.read_text(encoding="utf-8"))
+            bob = json.loads(bob_config.read_text(encoding="utf-8"))
+            self.assertIn(str((root / "alice" / "installed-handlers" / "builtin_shell").resolve()), alice["handlerPaths"])
+            self.assertEqual(bob["handlerPaths"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
