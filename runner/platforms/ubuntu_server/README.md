@@ -12,13 +12,14 @@ curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/pl
   --runner-id runner_ubuntu_01
 ```
 
-The installer prompts for the runner token and writes it to `/etc/task-hub/runner.env`.
+The installer prompts for `TASK_HUB_REGISTRATION_TOKEN`, registers the runner with the Worker, generates a runner credential, and writes it to `/etc/task-hub/runner.env`. The default install only enables the `selfcheck` handler.
 
 The installer:
 
 - installs `git` and `python3`
 - creates the `taskhub` system user
 - clones or updates the repo at `/opt/task-hub`
+- registers the runner with the Worker for `selfcheck`
 - writes `runner/config/runner.json`
 - stores the runner credential in `/etc/task-hub/runner.env`
 - creates and starts `taskhub-runner.service`
@@ -33,20 +34,52 @@ sudo bash install.sh \
   --runner-id runner_ubuntu_01
 ```
 
-The credential must match the credential used when registering this `runnerId` with the Worker.
+The registration token must match the Worker secret `RUNNER_REGISTRATION_TOKEN`.
 
-For non-interactive automation, pass the token through the command environment:
+For non-interactive automation, pass the registration token through the command environment:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo TASK_HUB_REGISTRATION_TOKEN='replace-with-registration-secret' bash -s -- \
+  --base-url https://your-worker.workers.dev \
+  --runner-id runner_ubuntu_01
+```
+
+To skip cloud registration and use a pre-registered runner credential:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo TASK_HUB_RUNNER_TOKEN='replace-with-runner-secret' bash -s -- \
   --base-url https://your-worker.workers.dev \
-  --runner-id runner_ubuntu_01
+  --runner-id runner_ubuntu_01 \
+  --no-register
 ```
 
 View logs after installation:
 
 ```bash
 journalctl -u taskhub-runner -f
+```
+
+## Install handlers
+
+The default runner only accepts `selfcheck` tasks. Install additional handlers on demand:
+
+```bash
+sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell
+```
+
+The handler installer copies the trusted catalog handler from `/opt/task-hub/runner/handlers` into `/opt/task-hub/runner/installed-handlers`, updates `runner/config/runner.json`, re-registers the runner with the Worker, and restarts `taskhub-runner`.
+
+For automation:
+
+```bash
+sudo TASK_HUB_REGISTRATION_TOKEN='replace-with-registration-secret' \
+  /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell
+```
+
+To only update local config without cloud re-registration:
+
+```bash
+sudo /opt/task-hub/runner/platforms/ubuntu_server/install-handler.sh shell --no-register
 ```
 
 ## Install from source

@@ -30,10 +30,11 @@ It performs:
 
 ## Worker Secret
 
-Set `WEBHOOK_SECRET` as a GitHub Secret and, for local/manual deploys, as a Cloudflare Worker secret:
+Set `WEBHOOK_SECRET` and `RUNNER_REGISTRATION_TOKEN` as GitHub Secrets and, for local/manual deploys, as Cloudflare Worker secrets:
 
 ```powershell
 npx wrangler secret put WEBHOOK_SECRET
+npx wrangler secret put RUNNER_REGISTRATION_TOKEN
 ```
 
 ## Local Deploy

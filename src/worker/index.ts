@@ -7,6 +7,7 @@ interface Env {
   TASK_SUBMISSIONS: Queue;
   TASK_OBJECTS: R2Bucket;
   WEBHOOK_SECRET?: string;
+  RUNNER_REGISTRATION_TOKEN?: string;
 }
 
 async function parseJson<T>(request: Request): Promise<T> {
@@ -18,6 +19,10 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function bearerToken(request: Request): string {
+  return request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
 }
 
 export default {
@@ -41,6 +46,12 @@ export default {
       }
 
       if (request.method === "POST" && url.pathname === "/runners/register") {
+        if (!env.RUNNER_REGISTRATION_TOKEN) {
+          return json({ error: "runner registration is disabled" }, 401);
+        }
+        if (bearerToken(request) !== env.RUNNER_REGISTRATION_TOKEN) {
+          return json({ error: "invalid runner registration token" }, 401);
+        }
         const runner = await service.registerRunner(await parseJson<RunnerRegistration>(request));
         return json({ runnerId: runner.runnerId }, 201);
       }
@@ -48,21 +59,21 @@ export default {
       const claimMatch = url.pathname.match(/^\/runners\/([^/]+)\/claim$/);
       if (request.method === "POST" && claimMatch) {
         const runnerId = claimMatch[1] as string;
-        const credential = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+        const credential = bearerToken(request);
         return json(await service.claimTask(runnerId, credential));
       }
 
       const heartbeatMatch = url.pathname.match(/^\/tasks\/([^/]+)\/heartbeat$/);
       if (request.method === "POST" && heartbeatMatch) {
         const body = await parseJson<{ leaseId: string; runnerId: string }>(request);
-        const credential = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+        const credential = bearerToken(request);
         return json(await service.heartbeat(heartbeatMatch[1] as string, body.leaseId, body.runnerId, credential));
       }
 
       const logsMatch = url.pathname.match(/^\/tasks\/([^/]+)\/logs$/);
       if (request.method === "POST" && logsMatch) {
         const body = await parseJson<{ leaseId: string; runnerId: string; entries: LogEntry[] }>(request);
-        const credential = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+        const credential = bearerToken(request);
         await service.appendLogs(logsMatch[1] as string, body.leaseId, body.runnerId, credential, body.entries);
         return json({ ok: true });
       }
@@ -70,7 +81,7 @@ export default {
       const completeMatch = url.pathname.match(/^\/tasks\/([^/]+)\/complete$/);
       if (request.method === "POST" && completeMatch) {
         const body = await parseJson<CompleteTaskInput & { leaseId: string; runnerId: string }>(request);
-        const credential = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
+        const credential = bearerToken(request);
         const completed = await service.completeTask(
           completeMatch[1] as string,
           body.leaseId,

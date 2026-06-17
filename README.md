@@ -16,7 +16,7 @@ The repository is split into three layers:
 - **R2:** log batches and large result artifacts.
 - **KV:** configured in `wrangler.toml` for short-lived tokens and low-consistency cache use.
 - **Runner:** Python daemon/service that uses only outbound HTTPS.
-- **Task Handler:** local Runner plugins. v1 includes the registered-script Shell handler and interfaces for Python/Git/Agent handlers.
+- **Task Handler:** local Runner plugins. Ubuntu installs enable `selfcheck` by default; task-specific handlers such as registered-script Shell are installed on demand.
 
 ## Task Flow
 
@@ -55,8 +55,8 @@ Runner registration:
   "credential": "runner-secret",
   "platform": "linux",
   "labels": ["prod"],
-  "taskTypes": ["shell", "python", "git"],
-  "capabilities": ["shell.registered_scripts"]
+  "taskTypes": ["selfcheck"],
+  "capabilities": ["runner.selfcheck"]
 }
 ```
 
@@ -122,14 +122,14 @@ Run continuously:
 set PYTHONPATH=runner&& python -m taskhub_runner.cli --config runner\config\runner.json
 ```
 
-The Runner currently wires the `shell` handler when `scripts` are configured. Shell tasks must reference a registered `scriptId`; arbitrary shell command payloads are intentionally rejected.
+Ubuntu one-line installs enable the `selfcheck` handler first. Install the `shell` handler on demand when registered scripts are needed. Shell tasks must reference a registered `scriptId`; arbitrary shell command payloads are intentionally rejected.
 
 ## Cloudflare Setup
 
 1. Create a D1 database, R2 bucket, KV namespace, and Queue.
 2. Copy `cloudflare/wrangler.toml.template` to `wrangler.toml` for local deploys and replace placeholders.
 3. Apply `cloudflare/migrations/0001_initial.sql`.
-4. Set `WEBHOOK_SECRET` as a Worker secret.
+4. Set `WEBHOOK_SECRET` and `RUNNER_REGISTRATION_TOKEN` as Worker secrets.
 5. Deploy with Wrangler.
 
 The current implementation contains the deployable Worker bindings and queue consumer, plus a tested in-memory store for unit tests.
@@ -141,12 +141,14 @@ Configure these repository secrets before using the workflows:
 ```text
 CLOUDFLARE_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
+RUNNER_REGISTRATION_TOKEN
 ```
 
-`WEBHOOK_SECRET` should be set as a Worker secret before production use:
+`WEBHOOK_SECRET` and `RUNNER_REGISTRATION_TOKEN` should be set as Worker secrets before production use:
 
 ```powershell
 npx wrangler secret put WEBHOOK_SECRET
+npx wrangler secret put RUNNER_REGISTRATION_TOKEN
 ```
 
 The repository includes two workflows:

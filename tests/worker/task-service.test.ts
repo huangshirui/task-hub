@@ -66,6 +66,56 @@ test("queue consumer keeps offline runner work pending for the specified runner"
   assert.equal(processed.runnerId, "runner-linux");
 });
 
+test("runner registration supports selfcheck task type", async () => {
+  const store = new InMemoryTaskStore();
+  const service = new TaskHubService(store);
+
+  await service.registerRunner({
+    runnerId: "runner-selfcheck",
+    credential: "secret",
+    platform: "linux",
+    labels: ["ubuntu-server"],
+    taskTypes: ["selfcheck"],
+    capabilities: ["runner.selfcheck"],
+  });
+
+  const submitted = await service.submitTask({
+    runnerId: "runner-selfcheck",
+    type: "selfcheck",
+    name: "selfcheck",
+    payload: {},
+    timeoutSeconds: 30,
+  });
+  const processed = await service.processQueuedTask(submitted.taskId);
+
+  assert.equal(processed.status, "pending_runner");
+});
+
+test("runner re-registration updates task types and capabilities", async () => {
+  const store = new InMemoryTaskStore();
+  const service = new TaskHubService(store);
+
+  await service.registerRunner({
+    runnerId: "runner-update",
+    credential: "secret",
+    platform: "linux",
+    labels: ["ubuntu-server"],
+    taskTypes: ["selfcheck"],
+    capabilities: ["runner.selfcheck"],
+  });
+  await service.registerRunner({
+    runnerId: "runner-update",
+    credential: "secret",
+    platform: "linux",
+    labels: ["ubuntu-server"],
+    taskTypes: ["selfcheck", "shell"],
+    capabilities: ["runner.selfcheck", "shell.registered_scripts"],
+  });
+
+  assert.deepEqual(store.runners.get("runner-update")?.taskTypes, ["selfcheck", "shell"]);
+  assert.deepEqual(store.runners.get("runner-update")?.capabilities, ["runner.selfcheck", "shell.registered_scripts"]);
+});
+
 test("runner can only claim tasks explicitly assigned to itself", async () => {
   const store = new InMemoryTaskStore();
   const service = new TaskHubService(store, { now: () => new Date("2026-06-11T00:00:00.000Z") });

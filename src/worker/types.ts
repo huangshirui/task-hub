@@ -1,4 +1,4 @@
-export type TaskType = "shell" | "python" | "git" | "agent" | "backup" | "build" | "ocr" | "file";
+export type TaskType = "selfcheck" | "shell" | "python" | "git" | "agent" | "backup" | "build" | "ocr" | "file";
 
 export type TaskStatus =
   | "queued"

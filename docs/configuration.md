@@ -47,9 +47,12 @@ Set these as repository secrets:
 CLOUDFLARE_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
 WEBHOOK_SECRET
+RUNNER_REGISTRATION_TOKEN
 ```
 
 Do not commit API tokens, Worker secrets, Runner credentials, or real local runner config.
+
+`RUNNER_REGISTRATION_TOKEN` protects `POST /runners/register`. Ubuntu one-line installs prompt for this value, use it once to register the runner, and then store only the generated runner credential on the runner host.
 
 ## Runner
 

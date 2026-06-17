@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import getpass
+import os
+import platform
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
+
+from .version import __version__
 
 
 @dataclass(frozen=True)
@@ -11,6 +17,8 @@ class HandlerContext:
     task_id: str
     workspace: Path
     timeout_seconds: int
+    runner_id: str = ""
+    enabled_handlers: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -28,6 +36,28 @@ class TaskHandler(Protocol):
 
     def run(self, payload: dict, context: HandlerContext) -> HandlerResult:
         raise NotImplementedError
+
+
+class SelfCheckHandler:
+    task_type = "selfcheck"
+
+    def run(self, payload: dict, context: HandlerContext) -> HandlerResult:
+        return HandlerResult(
+            status="succeeded",
+            exit_code=0,
+            result={
+                "taskId": context.task_id,
+                "runnerId": context.runner_id,
+                "runnerVersion": __version__,
+                "platform": platform.platform(),
+                "system": platform.system().lower(),
+                "pythonVersion": sys.version.split()[0],
+                "currentUser": getpass.getuser(),
+                "cwd": os.getcwd(),
+                "workspace": str(context.workspace),
+                "enabledHandlers": sorted(context.enabled_handlers),
+            },
+        )
 
 
 class ShellHandler:

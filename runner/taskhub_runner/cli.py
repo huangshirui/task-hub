@@ -19,7 +19,7 @@ def build_runner(config_path: Path, client_factory: ClientFactory = RunnerClient
     config = load_runner_config(config_path)
     client = client_factory(config.base_url, config.runner_id, config.credential)
     handlers = build_handlers(config)
-    return TaskRunner(client=client, handlers=handlers, workspace_root=config.workspace_root)
+    return TaskRunner(client=client, handlers=handlers, workspace_root=config.workspace_root, runner_id=config.runner_id)
 
 
 def build_handlers(config: RunnerConfig):

@@ -8,10 +8,11 @@ from .handlers import HandlerContext, HandlerResult, TaskHandler
 
 
 class TaskRunner:
-    def __init__(self, client: Any, handlers: dict[str, TaskHandler], workspace_root: Path):
+    def __init__(self, client: Any, handlers: dict[str, TaskHandler], workspace_root: Path, runner_id: str = ""):
         self._client = client
         self._handlers = handlers
         self._workspace_root = workspace_root
+        self._runner_id = runner_id
 
     def run_once(self) -> bool:
         claim = self._client.claim()
@@ -40,6 +41,8 @@ class TaskRunner:
                     task_id=task_id,
                     workspace=workspace,
                     timeout_seconds=int(claim.get("timeoutSeconds", 60)),
+                    runner_id=self._runner_id,
+                    enabled_handlers=sorted(self._handlers.keys()),
                 ),
             )
             self._upload_process_logs(task_id, lease_id, result)

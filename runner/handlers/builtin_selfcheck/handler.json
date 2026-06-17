@@ -1,0 +1,9 @@
+{
+  "name": "builtin-selfcheck",
+  "version": "1.0.0",
+  "taskTypes": ["selfcheck"],
+  "platforms": ["linux", "windows", "darwin"],
+  "capabilities": ["runner.selfcheck"],
+  "entrypoint": "taskhub_runner.handlers:SelfCheckHandler",
+  "timeoutMaxSeconds": 60
+}

@@ -9,6 +9,8 @@ SERVICE_NAME="taskhub-runner"
 BASE_URL=""
 RUNNER_ID=""
 TOKEN=""
+REGISTRATION_TOKEN=""
+NO_REGISTER=0
 
 usage() {
   cat <<'EOF'
@@ -20,7 +22,10 @@ Usage:
 Options:
   --base-url URL       Deployed Cloudflare Worker URL.
   --runner-id ID       Runner ID registered with the Worker.
-  --token TOKEN        Runner credential for this runner ID. Prefer the prompt or TASK_HUB_RUNNER_TOKEN.
+  --token TOKEN        Runner credential for this runner ID. Defaults to a generated token.
+  --registration-token TOKEN
+                       Admin token allowed to register runners. Prefer the prompt or TASK_HUB_REGISTRATION_TOKEN.
+  --no-register        Skip cloud registration and only install the local runner service.
   --repo-url URL       Git repository URL. Defaults to the upstream task-hub repo.
   --branch NAME        Git branch to install. Defaults to main.
   --install-dir PATH   Install path. Defaults to /opt/task-hub.
@@ -55,6 +60,15 @@ while [[ $# -gt 0 ]]; do
       TOKEN="$2"
       shift 2
       ;;
+    --registration-token)
+      need_value "$@"
+      REGISTRATION_TOKEN="$2"
+      shift 2
+      ;;
+    --no-register)
+      NO_REGISTER=1
+      shift
+      ;;
     --repo-url)
       need_value "$@"
       REPO_URL="$2"
@@ -88,20 +102,6 @@ done
 [[ "$(id -u)" -eq 0 ]] || die "run this installer as root, for example: curl -fsSL URL | sudo bash -s -- ..."
 [[ -n "$BASE_URL" ]] || die "--base-url is required"
 [[ -n "$RUNNER_ID" ]] || die "--runner-id is required"
-
-if [[ -z "$TOKEN" && -n "${TASK_HUB_RUNNER_TOKEN:-}" ]]; then
-  TOKEN="$TASK_HUB_RUNNER_TOKEN"
-fi
-
-if [[ -z "$TOKEN" ]]; then
-  [[ -r /dev/tty ]] || die "runner token is required; set TASK_HUB_RUNNER_TOKEN or pass --token"
-  printf "Runner token for %s: " "$RUNNER_ID" >/dev/tty
-  IFS= read -r -s TOKEN </dev/tty
-  printf "\n" >/dev/tty
-fi
-
-[[ -n "$TOKEN" ]] || die "runner token is required"
-[[ "$TOKEN" != *$'\n'* ]] || die "--token must not contain newlines"
 [[ "$INSTALL_DIR" = /* ]] || die "--install-dir must be an absolute path"
 
 if command -v apt-get >/dev/null 2>&1; then
@@ -138,6 +138,77 @@ SERVICE_PATH="/etc/systemd/system/$SERVICE_NAME.service"
 
 mkdir -p "$CONFIG_DIR" "$WORKSPACE_DIR" "$ENV_DIR"
 
+if [[ -z "$TOKEN" && -n "${TASK_HUB_RUNNER_TOKEN:-}" ]]; then
+  TOKEN="$TASK_HUB_RUNNER_TOKEN"
+fi
+
+if [[ "$NO_REGISTER" -eq 1 && -z "$TOKEN" ]]; then
+  [[ -r /dev/tty ]] || die "runner token is required with --no-register; set TASK_HUB_RUNNER_TOKEN or pass --token"
+  printf "Runner token for %s: " "$RUNNER_ID" >/dev/tty
+  IFS= read -r -s TOKEN </dev/tty
+  printf "\n" >/dev/tty
+fi
+
+if [[ -z "$TOKEN" ]]; then
+  TOKEN="$(python3 - <<'PY'
+import secrets
+
+print(secrets.token_urlsafe(48))
+PY
+)"
+fi
+
+[[ -n "$TOKEN" ]] || die "runner token is required"
+[[ "$TOKEN" != *$'\n'* ]] || die "--token must not contain newlines"
+
+if [[ "$NO_REGISTER" -eq 0 ]]; then
+  if [[ -z "$REGISTRATION_TOKEN" && -n "${TASK_HUB_REGISTRATION_TOKEN:-}" ]]; then
+    REGISTRATION_TOKEN="$TASK_HUB_REGISTRATION_TOKEN"
+  fi
+
+  if [[ -z "$REGISTRATION_TOKEN" ]]; then
+    [[ -r /dev/tty ]] || die "registration token is required; set TASK_HUB_REGISTRATION_TOKEN or pass --registration-token"
+    printf "Runner registration token: " >/dev/tty
+    IFS= read -r -s REGISTRATION_TOKEN </dev/tty
+    printf "\n" >/dev/tty
+  fi
+
+  [[ -n "$REGISTRATION_TOKEN" ]] || die "registration token is required"
+  [[ "$REGISTRATION_TOKEN" != *$'\n'* ]] || die "--registration-token must not contain newlines"
+
+  python3 - "$BASE_URL" "$RUNNER_ID" "$TOKEN" "$REGISTRATION_TOKEN" <<'PY'
+import json
+import sys
+from urllib import error, request
+
+base_url, runner_id, credential, registration_token = sys.argv[1:5]
+payload = {
+    "runnerId": runner_id,
+    "credential": credential,
+    "platform": "linux",
+    "labels": ["ubuntu-server"],
+    "taskTypes": ["selfcheck"],
+    "capabilities": ["runner.selfcheck"],
+}
+body = json.dumps(payload).encode("utf-8")
+req = request.Request(
+    f"{base_url.rstrip('/')}/runners/register",
+    data=body,
+    method="POST",
+    headers={
+        "authorization": f"Bearer {registration_token}",
+        "content-type": "application/json",
+    },
+)
+try:
+    with request.urlopen(req, timeout=30) as response:
+        response.read()
+except error.HTTPError as exc:
+    details = exc.read().decode("utf-8", errors="replace")
+    raise SystemExit(f"runner registration failed: HTTP {exc.code} {details}") from exc
+PY
+fi
+
 python3 - "$CONFIG_PATH" "$BASE_URL" "$RUNNER_ID" <<'PY'
 import json
 import sys
@@ -152,7 +223,7 @@ config = {
     "credentialEnv": "TASK_HUB_RUNNER_TOKEN",
     "workspaceRoot": "../../runner-workspaces",
     "pollIntervalSeconds": 5,
-    "handlerPaths": ["../handlers/builtin_shell"],
+    "handlerPaths": ["../handlers/builtin_selfcheck"],
     "scriptRegistryPath": "scripts.json",
 }
 path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
