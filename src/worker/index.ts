@@ -39,7 +39,11 @@ const taskStatuses: TaskStatus[] = [
 const taskTypes: TaskType[] = ["selfcheck", "shell", "python", "git", "agent", "backup", "build", "ocr", "file"];
 
 async function parseJson<T>(request: Request): Promise<T> {
-  return (await request.json()) as T;
+  try {
+    return (await request.json()) as T;
+  } catch {
+    throw new ValidationError("invalid JSON body");
+  }
 }
 
 function json(body: unknown, status = 200): Response {
@@ -145,9 +149,6 @@ export function createWorker(
         }
         if (error instanceof NotFoundError) {
           return json({ error: "not found" }, 404);
-        }
-        if (error instanceof SyntaxError) {
-          return json({ error: "invalid JSON body" }, 400);
         }
         return json({ error: "internal server error" }, 500);
       }

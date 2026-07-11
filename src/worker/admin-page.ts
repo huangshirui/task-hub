@@ -331,7 +331,7 @@ const adminDocument = `<!doctype html>
     (function () {
       "use strict";
       var TOKEN_KEY = "taskHubAdminToken";
-      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], selectedRunnerId: "", selectedTaskId: "", taskCursor: "", nextCursor: "", timer: 0, runnerRequestGeneration: 0, taskRequestGeneration: 0, refreshPromise: null };
+      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], selectedRunnerId: "", selectedTaskId: "", taskCursor: "", nextCursor: "", timer: 0, runnerRequestGeneration: 0, taskRequestGeneration: 0, detailRequestGeneration: 0, sessionEpoch: 0, refreshPromise: null };
       var authView = document.getElementById("auth-view");
       var app = document.getElementById("app");
       var authForm = document.getElementById("auth-form");
@@ -340,6 +340,7 @@ const adminDocument = `<!doctype html>
 
       authForm.addEventListener("submit", function (event) {
         event.preventDefault();
+        state.sessionEpoch += 1;
         state.token = tokenInput.value.trim();
         sessionStorage.setItem(TOKEN_KEY, state.token);
         connect();
@@ -361,39 +362,55 @@ const adminDocument = `<!doctype html>
       });
 
       function connect() {
+        var epoch = state.sessionEpoch;
+        var token = state.token;
         authError.textContent = "";
         refreshAll().then(function () {
+          if (epoch !== state.sessionEpoch || token !== state.token) return;
           authView.hidden = true;
           app.hidden = false;
           schedulePolling();
         }).catch(function (error) {
-          if (error.message !== "unauthorized") authError.textContent = error.message;
+          if (epoch === state.sessionEpoch && error.message !== "unauthorized") authError.textContent = error.message;
         });
       }
 
       function signOut() {
+        state.sessionEpoch += 1;
         sessionStorage.removeItem(TOKEN_KEY);
         state.token = "";
         state.runners = [];
         state.tasks = [];
+        state.selectedRunnerId = "";
+        state.selectedTaskId = "";
+        state.taskCursor = "";
+        state.nextCursor = "";
         state.runnerRequestGeneration += 1;
         state.taskRequestGeneration += 1;
+        state.detailRequestGeneration += 1;
+        state.refreshPromise = null;
         clearTimeout(state.timer);
         app.hidden = true;
         authView.hidden = false;
         tokenInput.value = "";
+        document.getElementById("task-detail").innerHTML = '<div class="detail-empty">Select a task to inspect execution details.</div><div id="task-logs" hidden></div>';
+        document.getElementById("detail-status").replaceChildren();
         tokenInput.focus();
       }
 
       async function api(path, options) {
         options = options || {};
+        var requestEpoch = state.sessionEpoch;
+        var requestToken = state.token;
         var headers = new Headers(options.headers || {});
-        headers.set("authorization", "Bearer " + state.token);
+        headers.set("authorization", "Bearer " + requestToken);
         if (options.body) headers.set("content-type", "application/json");
         var response = await fetch(path, Object.assign({}, options, { headers: headers }));
         if (response.status === 401) {
-          signOut();
-          authError.textContent = "The admin token was rejected.";
+          if (requestEpoch === state.sessionEpoch && requestToken === state.token) {
+            signOut();
+            authError.textContent = "The admin token was rejected.";
+          }
           throw new Error("unauthorized");
         }
         var body = await response.json();
@@ -403,38 +420,42 @@ const adminDocument = `<!doctype html>
 
       async function refreshAll() {
         if (state.refreshPromise) return state.refreshPromise;
-        state.refreshPromise = (async function () {
+        var epoch = state.sessionEpoch;
+        var refresh = (async function () {
           setConnection(false, "Refreshing");
           try {
             await loadRunners();
             await loadTasks();
+            if (epoch !== state.sessionEpoch) return;
             setConnection(true, "Connected");
             document.getElementById("last-refresh").textContent = "Updated " + new Date().toLocaleTimeString();
           } catch (error) {
-            setConnection(false, "Unavailable");
+            if (epoch === state.sessionEpoch) setConnection(false, "Unavailable");
             throw error;
           }
         }());
+        state.refreshPromise = refresh;
         try {
-          return await state.refreshPromise;
+          return await refresh;
         } finally {
-          state.refreshPromise = null;
+          if (refresh === state.refreshPromise) state.refreshPromise = null;
         }
       }
 
       async function loadRunners() {
         var generation = ++state.runnerRequestGeneration;
+        var epoch = state.sessionEpoch;
         var runners = [];
         var page;
         var cursor = "";
         do {
           var path = "/api/admin/runners?limit=100" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : "");
           page = await api(path);
-          if (generation !== state.runnerRequestGeneration) return;
+          if (generation !== state.runnerRequestGeneration || epoch !== state.sessionEpoch) return;
           runners.push.apply(runners, page.items);
           cursor = page.nextCursor || "";
         } while (page.nextCursor);
-        if (generation !== state.runnerRequestGeneration) return;
+        if (generation !== state.runnerRequestGeneration || epoch !== state.sessionEpoch) return;
         state.runners = runners;
         if (state.selectedRunnerId && !state.runners.some(function (runner) { return runner.runnerId === state.selectedRunnerId; })) state.selectedRunnerId = "";
         renderRunners();
@@ -443,6 +464,7 @@ const adminDocument = `<!doctype html>
 
       async function loadTasks() {
         var generation = ++state.taskRequestGeneration;
+        var epoch = state.sessionEpoch;
         var params = new URLSearchParams({ limit: "50" });
         var status = document.getElementById("status-filter").value;
         if (state.selectedRunnerId) params.set("runnerId", state.selectedRunnerId);
@@ -450,14 +472,14 @@ const adminDocument = `<!doctype html>
         if (state.taskCursor) params.set("cursor", state.taskCursor);
         try {
           var page = await api("/api/admin/tasks?" + params.toString());
-          if (generation !== state.taskRequestGeneration) return;
+          if (generation !== state.taskRequestGeneration || epoch !== state.sessionEpoch) return;
           state.tasks = page.items;
           state.nextCursor = page.nextCursor || "";
           document.getElementById("next-page").disabled = !state.nextCursor;
           document.getElementById("task-error").hidden = true;
           renderTasks();
         } catch (error) {
-          if (generation !== state.taskRequestGeneration) return;
+          if (generation !== state.taskRequestGeneration || epoch !== state.sessionEpoch) return;
           var banner = document.getElementById("task-error");
           banner.textContent = error.message;
           banner.hidden = false;
@@ -531,13 +553,17 @@ const adminDocument = `<!doctype html>
 
       async function selectTask(taskId) {
         state.selectedTaskId = taskId;
+        var generation = ++state.detailRequestGeneration;
+        var epoch = state.sessionEpoch;
         renderTasks();
         var detail = document.getElementById("task-detail");
         detail.innerHTML = '<div class="detail-empty">Loading task details...</div>';
         try {
           var result = await Promise.all([api("/api/admin/tasks/" + encodeURIComponent(taskId)), api("/api/admin/tasks/" + encodeURIComponent(taskId) + "/logs")]);
+          if (generation !== state.detailRequestGeneration || epoch !== state.sessionEpoch || taskId !== state.selectedTaskId) return;
           renderDetail(result[0], result[1]);
         } catch (error) {
+          if (generation !== state.detailRequestGeneration || epoch !== state.sessionEpoch) return;
           detail.innerHTML = '<div class="error-banner"></div>';
           detail.firstElementChild.textContent = error.message;
         }

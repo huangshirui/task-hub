@@ -164,6 +164,7 @@ export interface WebhookDelivery {
 export interface TaskStore {
   putRunner(runner: RunnerRecord): Promise<void>;
   getRunner(runnerId: string): Promise<RunnerRecord | undefined>;
+  getRunnerView(runnerId: string, now: Date): Promise<RunnerView | undefined>;
   listRunnerViews(query: RunnerStoreListQuery): Promise<Page<RunnerView>>;
   touchRunnerHeartbeat(runnerId: string, timestamp: string): Promise<void>;
   putTask(task: TaskRecord): Promise<void>;

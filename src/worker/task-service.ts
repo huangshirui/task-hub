@@ -7,7 +7,6 @@ import type {
   RunnerListQuery,
   RunnerRecord,
   RunnerRegistrationInput,
-  RunnerStatus,
   RunnerView,
   SubmitTaskInput,
   TaskListQuery,
@@ -248,11 +247,10 @@ export class TaskHubService {
   }
 
   async getRunnerView(runnerId: string): Promise<RunnerDetail | undefined> {
-    const runner = await this.store.getRunner(runnerId);
-    if (!runner) {
+    const view = await this.store.getRunnerView(runnerId, this.now());
+    if (!view) {
       return undefined;
     }
-    const view = await this.runnerView(runner);
     const recentTasks = (await this.store.listTasks({ runnerId, limit: 20 })).items;
     return { ...view, recentTasks };
   }
@@ -271,30 +269,6 @@ export class TaskHubService {
       return undefined;
     }
     return this.store.getTaskLogs(taskId);
-  }
-
-  private async runnerView(runner: RunnerRecord): Promise<RunnerView> {
-    const currentTask = await this.store.findCurrentTask(runner.runnerId);
-    return {
-      runnerId: runner.runnerId,
-      name: runner.name,
-      platform: runner.platform,
-      labels: runner.labels,
-      taskTypes: runner.taskTypes,
-      capabilities: runner.capabilities,
-      lastHeartbeatAt: runner.lastHeartbeatAt,
-      status: runnerStatus(runner.lastHeartbeatAt, this.now()),
-      currentTask: currentTask
-        ? {
-            taskId: currentTask.taskId,
-            name: currentTask.name,
-            status: currentTask.status,
-            updatedAt: currentTask.updatedAt,
-          }
-        : undefined,
-      createdAt: runner.createdAt,
-      updatedAt: runner.updatedAt,
-    };
   }
 
   private async authenticateRunner(runnerId: string, credential: string): Promise<RunnerRecord> {
@@ -347,20 +321,6 @@ export class TaskHubService {
       createdAt: this.now().toISOString(),
     });
   }
-}
-
-function runnerStatus(lastHeartbeatAt: string | undefined, now: Date): RunnerStatus {
-  if (!lastHeartbeatAt) {
-    return "offline";
-  }
-  const ageMs = now.getTime() - new Date(lastHeartbeatAt).getTime();
-  if (ageMs <= 15_000) {
-    return "online";
-  }
-  if (ageMs <= 60_000) {
-    return "stale";
-  }
-  return "offline";
 }
 
 function normalizeLimit(limit: number | undefined): number {

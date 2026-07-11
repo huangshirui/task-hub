@@ -122,6 +122,29 @@ test("admin API sanitizes unexpected infrastructure failures", async () => {
   assert.deepEqual(await response.json(), { error: "internal server error" });
 });
 
+test("storage JSON corruption is an internal error, not an invalid request body", async () => {
+  const store = new InMemoryTaskStore();
+  store.listRunnerViews = async () => {
+    throw new SyntaxError("Unexpected token in labels_json");
+  };
+  const worker = createWorker(() => store);
+
+  const response = await worker.fetch(adminRequest("/api/admin/runners"), createEnv() as never);
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "internal server error" });
+});
+
+test("task cursors reject non-canonical timestamps", async () => {
+  const worker = createWorker(() => new InMemoryTaskStore());
+  const cursor = btoa(JSON.stringify({ createdAt: "not-a-date", taskId: "task-a" }));
+
+  const response = await worker.fetch(adminRequest(`/api/admin/tasks?cursor=${encodeURIComponent(cursor)}`), createEnv() as never);
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid cursor" });
+});
+
 function adminRequest(path: string, init: RequestInit = {}): Request {
   const headers = new Headers(init.headers);
   headers.set("authorization", "Bearer admin-secret");

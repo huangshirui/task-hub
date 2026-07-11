@@ -28,6 +28,11 @@ export class InMemoryTaskStore implements TaskStore {
     return runner ? { ...runner } : undefined;
   }
 
+  async getRunnerView(runnerId: string, now: Date): Promise<RunnerView | undefined> {
+    const runner = this.runners.get(runnerId);
+    return runner ? runnerView(runner, await this.findCurrentTask(runnerId), now) : undefined;
+  }
+
   async listRunnerViews(query: RunnerStoreListQuery): Promise<Page<RunnerView>> {
     const afterRunnerId = decodeRunnerCursor(query.cursor);
     const views = await Promise.all(

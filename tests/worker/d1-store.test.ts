@@ -57,6 +57,27 @@ test("D1 runner listing uses a bounded safe projection", async () => {
   assert.equal(bindings.at(-1), 11);
 });
 
+test("D1 admin runner detail never selects the credential hash", async () => {
+  let sql = "";
+  const db = {
+    prepare(statement: string) {
+      sql = statement;
+      return {
+        bind() {
+          return { async first() { return undefined; } };
+        },
+      };
+    },
+  };
+  const store = new D1TaskStore(db as never);
+
+  await store.getRunnerView("runner-a", new Date("2026-07-11T00:00:30.000Z"));
+
+  assert.doesNotMatch(sql, /credential_hash/);
+  assert.match(sql, /current_task_id/);
+  assert.match(sql, /r\.runner_id = \?/);
+});
+
 test("R2 task logs are flattened chronologically and malformed objects are counted", async () => {
   const bodies = new Map([
     ["tasks/task-a/logs/002.json", JSON.stringify([{ stream: "stdout", message: "second", timestamp: "2026-07-11T00:00:02.000Z" }])],

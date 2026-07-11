@@ -27,10 +27,20 @@ export function decodeTaskCursor(cursor: string | undefined): TaskCursor | undef
     return undefined;
   }
   const value = decode(cursor);
-  if (typeof value.createdAt !== "string" || !value.createdAt || typeof value.taskId !== "string" || !value.taskId) {
+  if (
+    typeof value.createdAt !== "string" ||
+    !isCanonicalTimestamp(value.createdAt) ||
+    typeof value.taskId !== "string" ||
+    !value.taskId
+  ) {
     throw new ValidationError("invalid cursor");
   }
   return { createdAt: value.createdAt, taskId: value.taskId };
+}
+
+function isCanonicalTimestamp(value: string): boolean {
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 function encode(value: object): string {

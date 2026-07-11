@@ -84,6 +84,34 @@ export class D1TaskStore implements TaskStore {
     };
   }
 
+  async getRunnerView(runnerId: string, now: Date): Promise<RunnerView | undefined> {
+    const onlineCutoff = new Date(now.getTime() - 15_000).toISOString();
+    const staleCutoff = new Date(now.getTime() - 60_000).toISOString();
+    const row = await this.db
+      .prepare(
+        `SELECT
+          r.runner_id, COALESCE(r.name, r.runner_id) AS name, r.platform, r.labels_json,
+          r.task_types_json, r.capabilities_json, r.last_heartbeat_at, r.created_at, r.updated_at,
+          CASE
+            WHEN r.last_heartbeat_at IS NOT NULL AND r.last_heartbeat_at >= ? THEN 'online'
+            WHEN r.last_heartbeat_at IS NOT NULL AND r.last_heartbeat_at >= ? THEN 'stale'
+            ELSE 'offline'
+          END AS status,
+          t.task_id AS current_task_id, t.name AS current_task_name,
+          t.status AS current_task_status, t.updated_at AS current_task_updated_at
+        FROM runners r
+        LEFT JOIN tasks t ON t.task_id = (
+          SELECT ct.task_id FROM tasks ct
+          WHERE ct.runner_id = r.runner_id AND ct.status IN ('leased', 'running')
+          ORDER BY ct.updated_at DESC, ct.task_id DESC LIMIT 1
+        )
+        WHERE r.runner_id = ?`,
+      )
+      .bind(onlineCutoff, staleCutoff, runnerId)
+      .first<Record<string, unknown>>();
+    return row ? runnerViewFromRow(row) : undefined;
+  }
+
   async listRunnerViews(query: RunnerStoreListQuery): Promise<Page<RunnerView>> {
     const afterRunnerId = decodeRunnerCursor(query.cursor);
     const onlineCutoff = new Date(query.now.getTime() - 15_000).toISOString();
