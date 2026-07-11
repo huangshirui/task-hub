@@ -32,6 +32,7 @@ test("worker serves the responsive admin console without embedding credentials",
     assert.match(html, /detailRequestGeneration/);
     assert.match(html, /sessionEpoch/);
     assert.match(html, /refresh === state\.refreshPromise/);
+    assert.match(html, /state\.refreshEpoch === state\.sessionEpoch/);
     assert.match(html, /while \(page\.nextCursor\)/);
     assert.match(html, /finally\(schedulePolling\)/);
     assert.match(html, /leaseExpiresAt/);

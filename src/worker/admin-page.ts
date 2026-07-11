@@ -331,7 +331,7 @@ const adminDocument = `<!doctype html>
     (function () {
       "use strict";
       var TOKEN_KEY = "taskHubAdminToken";
-      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], selectedRunnerId: "", selectedTaskId: "", taskCursor: "", nextCursor: "", timer: 0, runnerRequestGeneration: 0, taskRequestGeneration: 0, detailRequestGeneration: 0, sessionEpoch: 0, refreshPromise: null };
+      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], selectedRunnerId: "", selectedTaskId: "", taskCursor: "", nextCursor: "", timer: 0, runnerRequestGeneration: 0, taskRequestGeneration: 0, detailRequestGeneration: 0, sessionEpoch: 0, refreshEpoch: -1, refreshPromise: null };
       var authView = document.getElementById("auth-view");
       var app = document.getElementById("app");
       var authForm = document.getElementById("auth-form");
@@ -388,6 +388,7 @@ const adminDocument = `<!doctype html>
         state.runnerRequestGeneration += 1;
         state.taskRequestGeneration += 1;
         state.detailRequestGeneration += 1;
+        state.refreshEpoch = -1;
         state.refreshPromise = null;
         clearTimeout(state.timer);
         app.hidden = true;
@@ -419,7 +420,7 @@ const adminDocument = `<!doctype html>
       }
 
       async function refreshAll() {
-        if (state.refreshPromise) return state.refreshPromise;
+        if (state.refreshPromise && state.refreshEpoch === state.sessionEpoch) return state.refreshPromise;
         var epoch = state.sessionEpoch;
         var refresh = (async function () {
           setConnection(false, "Refreshing");
@@ -435,10 +436,14 @@ const adminDocument = `<!doctype html>
           }
         }());
         state.refreshPromise = refresh;
+        state.refreshEpoch = epoch;
         try {
           return await refresh;
         } finally {
-          if (refresh === state.refreshPromise) state.refreshPromise = null;
+          if (refresh === state.refreshPromise) {
+            state.refreshPromise = null;
+            state.refreshEpoch = -1;
+          }
         }
       }
 
