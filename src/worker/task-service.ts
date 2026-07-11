@@ -17,6 +17,7 @@ import type {
   TerminalTaskStatus,
 } from "./types.js";
 import { hashRunnerCredential, verifyRunnerCredential } from "./security.js";
+import { AuthenticationError, NotFoundError, ValidationError } from "./errors.js";
 
 export interface TaskHubServiceOptions {
   now?: () => Date;
@@ -42,15 +43,30 @@ export class TaskHubService {
   }
 
   async registerRunner(registration: RunnerRegistrationInput): Promise<RunnerRecord> {
-    if (!registration.credential) {
-      throw new Error("runner credential is required");
+    if (!registration || typeof registration !== "object") {
+      throw new ValidationError("invalid runner registration");
+    }
+    if (typeof registration.credential !== "string" || !registration.credential) {
+      throw new ValidationError("runner credential is required");
+    }
+    if (registration.runnerId !== undefined && (typeof registration.runnerId !== "string" || !registration.runnerId.trim())) {
+      throw new ValidationError("invalid runnerId");
+    }
+    if (registration.name !== undefined && typeof registration.name !== "string") {
+      throw new ValidationError("invalid runner name");
+    }
+    if (!(["linux", "windows", "darwin"] as unknown[]).includes(registration.platform)) {
+      throw new ValidationError("invalid runner platform");
+    }
+    if (!isStringArray(registration.labels) || !isTaskTypeArray(registration.taskTypes) || !isStringArray(registration.capabilities)) {
+      throw new ValidationError("invalid runner capabilities");
     }
     const runnerId = registration.runnerId || `runner_${this.randomUUID()}`;
     const now = this.now().toISOString();
     const previous = await this.store.getRunner(runnerId);
     const runner: RunnerRecord = {
       runnerId,
-      name: registration.name?.trim() || runnerId,
+      name: registration.name?.trim() || previous?.name || runnerId,
       credentialHash: await hashRunnerCredential(registration.credential),
       platform: registration.platform,
       labels: registration.labels,
@@ -65,14 +81,32 @@ export class TaskHubService {
   }
 
   async submitTask(input: SubmitTaskInput): Promise<TaskRecord> {
-    if (!input.runnerId) {
-      throw new Error("runnerId is required");
+    if (!input || typeof input !== "object") {
+      throw new ValidationError("invalid task submission");
     }
-    if (!input.name) {
-      throw new Error("task name is required");
+    if (typeof input.runnerId !== "string" || !input.runnerId.trim()) {
+      throw new ValidationError("runnerId is required");
+    }
+    if (!isTaskType(input.type)) {
+      throw new ValidationError("invalid task type");
+    }
+    if (typeof input.name !== "string" || !input.name.trim()) {
+      throw new ValidationError("task name is required");
+    }
+    if (!isPlainObject(input.payload)) {
+      throw new ValidationError("task payload must be an object");
     }
     if (!Number.isInteger(input.timeoutSeconds) || input.timeoutSeconds <= 0) {
-      throw new Error("timeoutSeconds must be a positive integer");
+      throw new ValidationError("timeoutSeconds must be a positive integer");
+    }
+    if (input.priority !== undefined && !Number.isInteger(input.priority)) {
+      throw new ValidationError("priority must be an integer");
+    }
+    if (input.callbackUrl !== undefined && !isHttpUrl(input.callbackUrl)) {
+      throw new ValidationError("callbackUrl must be an HTTP URL");
+    }
+    if (input.idempotencyKey !== undefined && (typeof input.idempotencyKey !== "string" || !input.idempotencyKey)) {
+      throw new ValidationError("idempotencyKey must be a non-empty string");
     }
     if (input.idempotencyKey) {
       const existing = await this.store.findTaskByIdempotencyKey(input.idempotencyKey);
@@ -210,10 +244,7 @@ export class TaskHubService {
 
   async listRunners(query: RunnerListQuery = {}): Promise<Page<RunnerView>> {
     const limit = normalizeLimit(query.limit);
-    const offset = decodeCursor(query.cursor);
-    const views = await Promise.all((await this.store.listRunners()).map((runner) => this.runnerView(runner)));
-    const filtered = query.status ? views.filter((runner) => runner.status === query.status) : views;
-    return pageFrom(filtered, offset, limit);
+    return this.store.listRunnerViews({ ...query, limit, now: this.now() });
   }
 
   async getRunnerView(runnerId: string): Promise<RunnerDetail | undefined> {
@@ -222,15 +253,13 @@ export class TaskHubService {
       return undefined;
     }
     const view = await this.runnerView(runner);
-    const recentTasks = (await this.store.listTasks({ runnerId })).slice(0, 20);
+    const recentTasks = (await this.store.listTasks({ runnerId, limit: 20 })).items;
     return { ...view, recentTasks };
   }
 
   async listTasks(query: TaskListQuery = {}): Promise<Page<TaskRecord>> {
     const limit = normalizeLimit(query.limit);
-    const offset = decodeCursor(query.cursor);
-    const tasks = await this.store.listTasks({ runnerId: query.runnerId, status: query.status, type: query.type });
-    return pageFrom(tasks, offset, limit);
+    return this.store.listTasks({ ...query, limit });
   }
 
   async getTaskForAdmin(taskId: string): Promise<TaskRecord | undefined> {
@@ -271,7 +300,7 @@ export class TaskHubService {
   private async authenticateRunner(runnerId: string, credential: string): Promise<RunnerRecord> {
     const runner = await this.store.getRunner(runnerId);
     if (!runner || !(await verifyRunnerCredential(credential, runner.credentialHash))) {
-      throw new Error("invalid runner credential");
+      throw new AuthenticationError("invalid runner credential");
     }
     return runner;
   }
@@ -279,7 +308,7 @@ export class TaskHubService {
   private async requireTask(taskId: string): Promise<TaskRecord> {
     const task = await this.store.getTask(taskId);
     if (!task) {
-      throw new Error(`task ${taskId} not found`);
+      throw new NotFoundError(`task ${taskId} not found`);
     }
     return task;
   }
@@ -287,7 +316,7 @@ export class TaskHubService {
   private async requireLease(taskId: string, leaseId: string, runnerId: string): Promise<TaskRecord> {
     const task = await this.requireTask(taskId);
     if (task.runnerId !== runnerId || task.leaseId !== leaseId) {
-      throw new Error("invalid task lease");
+      throw new ValidationError("invalid task lease");
     }
     return task;
   }
@@ -339,34 +368,41 @@ function normalizeLimit(limit: number | undefined): number {
     return 50;
   }
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
-    throw new Error("limit must be an integer between 1 and 100");
+    throw new ValidationError("limit must be an integer between 1 and 100");
   }
   return limit;
 }
 
-function decodeCursor(cursor: string | undefined): number {
-  if (!cursor) {
-    return 0;
+const allowedTaskTypes = new Set(["selfcheck", "shell", "python", "git", "agent", "backup", "build", "ocr", "file"]);
+
+function isTaskType(value: unknown): value is TaskRecord["type"] {
+  return typeof value === "string" && allowedTaskTypes.has(value);
+}
+
+function isTaskTypeArray(value: unknown): value is TaskRecord["type"][] {
+  return Array.isArray(value) && value.every(isTaskType);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isHttpUrl(value: unknown): boolean {
+  if (typeof value !== "string") {
+    return false;
   }
   try {
-    const parsed = JSON.parse(atob(cursor)) as { offset?: unknown };
-    if (!Number.isInteger(parsed.offset) || (parsed.offset as number) < 0) {
-      throw new Error("invalid cursor");
-    }
-    return parsed.offset as number;
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:";
   } catch {
-    throw new Error("invalid cursor");
+    return false;
   }
 }
 
-function pageFrom<T>(items: T[], offset: number, limit: number): Page<T> {
-  const page = items.slice(offset, offset + limit);
-  const nextOffset = offset + page.length;
-  return {
-    items: page,
-    nextCursor: nextOffset < items.length ? btoa(JSON.stringify({ offset: nextOffset })) : undefined,
-  };
-}
 
 async function signWebhookBody(secret: string, body: string): Promise<string> {
   const encoder = new TextEncoder();

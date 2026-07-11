@@ -1,12 +1,16 @@
 import type {
   LogEntry,
+  Page,
   RunnerRecord,
-  TaskListQuery,
+  RunnerStoreListQuery,
+  RunnerView,
   TaskLogResult,
   TaskRecord,
   TaskStore,
+  TaskStoreListQuery,
   WebhookDelivery,
 } from "./types.js";
+import { decodeRunnerCursor, decodeTaskCursor, encodeRunnerCursor, encodeTaskCursor } from "./pagination.js";
 
 interface QueueBinding {
   send(message: unknown): Promise<unknown>;
@@ -80,9 +84,56 @@ export class D1TaskStore implements TaskStore {
     };
   }
 
-  async listRunners(): Promise<RunnerRecord[]> {
-    const result = await this.db.prepare("SELECT * FROM runners ORDER BY runner_id ASC").all<Record<string, unknown>>();
-    return result.results.map(runnerFromRow);
+  async listRunnerViews(query: RunnerStoreListQuery): Promise<Page<RunnerView>> {
+    const afterRunnerId = decodeRunnerCursor(query.cursor);
+    const onlineCutoff = new Date(query.now.getTime() - 15_000).toISOString();
+    const staleCutoff = new Date(query.now.getTime() - 60_000).toISOString();
+    const conditions: string[] = [];
+    const values: unknown[] = [onlineCutoff, staleCutoff];
+    if (query.status) {
+      conditions.push("status = ?");
+      values.push(query.status);
+    }
+    if (afterRunnerId) {
+      conditions.push("runner_id > ?");
+      values.push(afterRunnerId);
+    }
+    const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+    values.push(query.limit + 1);
+    const result = await this.db
+      .prepare(
+        `WITH runner_views AS (
+          SELECT
+            r.runner_id, COALESCE(r.name, r.runner_id) AS name, r.platform, r.labels_json,
+            r.task_types_json, r.capabilities_json, r.last_heartbeat_at, r.created_at, r.updated_at,
+            CASE
+              WHEN r.last_heartbeat_at IS NOT NULL AND r.last_heartbeat_at >= ? THEN 'online'
+              WHEN r.last_heartbeat_at IS NOT NULL AND r.last_heartbeat_at >= ? THEN 'stale'
+              ELSE 'offline'
+            END AS status,
+            t.task_id AS current_task_id, t.name AS current_task_name,
+            t.status AS current_task_status, t.updated_at AS current_task_updated_at
+          FROM runners r
+          LEFT JOIN tasks t ON t.task_id = (
+            SELECT ct.task_id FROM tasks ct
+            WHERE ct.runner_id = r.runner_id AND ct.status IN ('leased', 'running')
+            ORDER BY ct.updated_at DESC, ct.task_id DESC LIMIT 1
+          )
+        )
+        SELECT * FROM runner_views${where}
+        ORDER BY runner_id ASC
+        LIMIT ?`,
+      )
+      .bind(...values)
+      .all<Record<string, unknown>>();
+    const views = result.results.map(runnerViewFromRow);
+    const items = views.slice(0, query.limit);
+    return {
+      items,
+      nextCursor: views.length > query.limit && items.length
+        ? encodeRunnerCursor(items[items.length - 1]!.runnerId)
+        : undefined,
+    };
   }
 
   async touchRunnerHeartbeat(runnerId: string, timestamp: string): Promise<void> {
@@ -161,7 +212,7 @@ export class D1TaskStore implements TaskStore {
     return row ? taskFromRow(row) : undefined;
   }
 
-  async listTasks(query: Omit<TaskListQuery, "limit" | "cursor">): Promise<TaskRecord[]> {
+  async listTasks(query: TaskStoreListQuery): Promise<Page<TaskRecord>> {
     const conditions: string[] = [];
     const values: unknown[] = [];
     if (query.runnerId) {
@@ -176,12 +227,26 @@ export class D1TaskStore implements TaskStore {
       conditions.push("type = ?");
       values.push(query.type);
     }
+    const cursor = decodeTaskCursor(query.cursor);
+    if (cursor) {
+      conditions.push("(created_at < ? OR (created_at = ? AND task_id < ?))");
+      values.push(cursor.createdAt, cursor.createdAt, cursor.taskId);
+    }
     const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+    values.push(query.limit + 1);
     const result = await this.db
-      .prepare(`SELECT * FROM tasks${where} ORDER BY created_at DESC, task_id DESC`)
+      .prepare(`SELECT * FROM tasks${where} ORDER BY created_at DESC, task_id DESC LIMIT ?`)
       .bind(...values)
       .all<Record<string, unknown>>();
-    return result.results.map(taskFromRow);
+    const tasks = result.results.map(taskFromRow);
+    const items = tasks.slice(0, query.limit);
+    const last = items[items.length - 1];
+    return {
+      items,
+      nextCursor: tasks.length > query.limit && last
+        ? encodeTaskCursor({ createdAt: last.createdAt, taskId: last.taskId })
+        : undefined,
+    };
   }
 
   async findCurrentTask(runnerId: string): Promise<TaskRecord | undefined> {
@@ -264,6 +329,29 @@ function runnerFromRow(row: Record<string, unknown>): RunnerRecord {
     taskTypes: JSON.parse(String(row.task_types_json)) as RunnerRecord["taskTypes"],
     capabilities: JSON.parse(String(row.capabilities_json)) as string[],
     lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function runnerViewFromRow(row: Record<string, unknown>): RunnerView {
+  return {
+    runnerId: String(row.runner_id),
+    name: String(row.name),
+    platform: row.platform as RunnerView["platform"],
+    labels: JSON.parse(String(row.labels_json)) as string[],
+    taskTypes: JSON.parse(String(row.task_types_json)) as RunnerView["taskTypes"],
+    capabilities: JSON.parse(String(row.capabilities_json)) as string[],
+    lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined,
+    status: row.status as RunnerView["status"],
+    currentTask: row.current_task_id
+      ? {
+          taskId: String(row.current_task_id),
+          name: String(row.current_task_name),
+          status: row.current_task_status as TaskRecord["status"],
+          updatedAt: String(row.current_task_updated_at),
+        }
+      : undefined,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };

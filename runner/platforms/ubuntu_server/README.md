@@ -16,6 +16,8 @@ The installer prompts for `TASK_HUB_REGISTRATION_TOKEN`, registers the runner wi
 
 Pass `--runner-id runner_ubuntu_01` when a stable operator-selected ID is preferred. Without it, the Worker generates an ID such as `runner_7db26f65-...` and the installer writes that value to `runner.json`.
 
+When the account already has `runner.json`, rerunning the installer without `--runner-id` reuses that existing ID. Pass a different explicit `--runner-id` only when intentionally replacing the runner identity.
+
 The installer:
 
 - installs `git` and `python3`

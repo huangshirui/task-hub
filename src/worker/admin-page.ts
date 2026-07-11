@@ -331,7 +331,7 @@ const adminDocument = `<!doctype html>
     (function () {
       "use strict";
       var TOKEN_KEY = "taskHubAdminToken";
-      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], selectedRunnerId: "", selectedTaskId: "", nextCursor: "", timer: 0 };
+      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], selectedRunnerId: "", selectedTaskId: "", taskCursor: "", nextCursor: "", timer: 0, runnerRequestGeneration: 0, taskRequestGeneration: 0, refreshPromise: null };
       var authView = document.getElementById("auth-view");
       var app = document.getElementById("app");
       var authForm = document.getElementById("auth-form");
@@ -348,12 +348,13 @@ const adminDocument = `<!doctype html>
       document.getElementById("sign-out").addEventListener("click", signOut);
       document.getElementById("runner-filter").addEventListener("change", function (event) {
         state.selectedRunnerId = event.target.value;
+        state.taskCursor = "";
         renderRunners();
         loadTasks();
       });
-      document.getElementById("status-filter").addEventListener("change", loadTasks);
+      document.getElementById("status-filter").addEventListener("change", function () { state.taskCursor = ""; loadTasks(); });
       document.getElementById("run-selfcheck").addEventListener("click", runSelfcheck);
-      document.getElementById("next-page").addEventListener("click", function () { loadTasks(state.nextCursor); });
+      document.getElementById("next-page").addEventListener("click", function () { state.taskCursor = state.nextCursor; loadTasks(); });
       document.addEventListener("visibilitychange", function () {
         schedulePolling();
         if (!document.hidden && state.token) refreshAll();
@@ -375,6 +376,8 @@ const adminDocument = `<!doctype html>
         state.token = "";
         state.runners = [];
         state.tasks = [];
+        state.runnerRequestGeneration += 1;
+        state.taskRequestGeneration += 1;
         clearTimeout(state.timer);
         app.hidden = true;
         authView.hidden = false;
@@ -399,40 +402,62 @@ const adminDocument = `<!doctype html>
       }
 
       async function refreshAll() {
-        setConnection(false, "Refreshing");
+        if (state.refreshPromise) return state.refreshPromise;
+        state.refreshPromise = (async function () {
+          setConnection(false, "Refreshing");
+          try {
+            await loadRunners();
+            await loadTasks();
+            setConnection(true, "Connected");
+            document.getElementById("last-refresh").textContent = "Updated " + new Date().toLocaleTimeString();
+          } catch (error) {
+            setConnection(false, "Unavailable");
+            throw error;
+          }
+        }());
         try {
-          await loadRunners();
-          await loadTasks();
-          setConnection(true, "Connected");
-          document.getElementById("last-refresh").textContent = "Updated " + new Date().toLocaleTimeString();
-        } catch (error) {
-          setConnection(false, "Unavailable");
-          throw error;
+          return await state.refreshPromise;
+        } finally {
+          state.refreshPromise = null;
         }
       }
 
       async function loadRunners() {
-        var page = await api("/api/admin/runners?limit=100");
-        state.runners = page.items;
+        var generation = ++state.runnerRequestGeneration;
+        var runners = [];
+        var page;
+        var cursor = "";
+        do {
+          var path = "/api/admin/runners?limit=100" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : "");
+          page = await api(path);
+          if (generation !== state.runnerRequestGeneration) return;
+          runners.push.apply(runners, page.items);
+          cursor = page.nextCursor || "";
+        } while (page.nextCursor);
+        if (generation !== state.runnerRequestGeneration) return;
+        state.runners = runners;
         if (state.selectedRunnerId && !state.runners.some(function (runner) { return runner.runnerId === state.selectedRunnerId; })) state.selectedRunnerId = "";
         renderRunners();
         renderRunnerFilter();
       }
 
-      async function loadTasks(cursor) {
+      async function loadTasks() {
+        var generation = ++state.taskRequestGeneration;
         var params = new URLSearchParams({ limit: "50" });
         var status = document.getElementById("status-filter").value;
         if (state.selectedRunnerId) params.set("runnerId", state.selectedRunnerId);
         if (status) params.set("status", status);
-        if (cursor) params.set("cursor", cursor);
+        if (state.taskCursor) params.set("cursor", state.taskCursor);
         try {
           var page = await api("/api/admin/tasks?" + params.toString());
+          if (generation !== state.taskRequestGeneration) return;
           state.tasks = page.items;
           state.nextCursor = page.nextCursor || "";
           document.getElementById("next-page").disabled = !state.nextCursor;
           document.getElementById("task-error").hidden = true;
           renderTasks();
         } catch (error) {
+          if (generation !== state.taskRequestGeneration) return;
           var banner = document.getElementById("task-error");
           banner.textContent = error.message;
           banner.hidden = false;
@@ -455,6 +480,7 @@ const adminDocument = `<!doctype html>
           button.className = "runner-item" + (runner.runnerId === state.selectedRunnerId ? " selected" : "");
           button.addEventListener("click", function () {
             state.selectedRunnerId = runner.runnerId === state.selectedRunnerId ? "" : runner.runnerId;
+            state.taskCursor = "";
             document.getElementById("runner-filter").value = state.selectedRunnerId;
             renderRunners();
             loadTasks();
@@ -523,7 +549,16 @@ const adminDocument = `<!doctype html>
         var title = document.createElement("h3"); title.className = "detail-title"; title.textContent = task.name;
         var subtitle = document.createElement("p"); subtitle.className = "detail-subtitle"; subtitle.textContent = task.taskId;
         var grid = document.createElement("div"); grid.className = "detail-grid";
-        grid.append(metric("Status", task.status), metric("Runner", task.runnerId), metric("Type", task.type), metric("Updated", formatTime(task.updatedAt)));
+        grid.append(
+          metric("Status", task.status),
+          metric("Runner", task.runnerId),
+          metric("Type", task.type),
+          metric("Updated", formatTime(task.updatedAt)),
+          metric("Lease ID", task.leaseId),
+          metric("Lease expires", formatTime(task.leaseExpiresAt)),
+          metric("Created", formatTime(task.createdAt)),
+          metric("Timeout", task.timeoutSeconds + " seconds")
+        );
         detail.append(title, subtitle, grid, jsonSection("Payload", task.payload));
         if (task.result) detail.append(jsonSection("Result", task.result));
         if (task.error) detail.append(textSection("Error", task.error));
@@ -537,6 +572,7 @@ const adminDocument = `<!doctype html>
         button.disabled = true;
         try {
           await api("/api/admin/tasks", { method: "POST", body: JSON.stringify({ runnerId: state.selectedRunnerId, type: "selfcheck", name: "Console self-check", payload: {}, timeoutSeconds: 60 }) });
+          state.taskCursor = "";
           await loadTasks();
         } catch (error) {
           var banner = document.getElementById("task-error"); banner.textContent = error.message; banner.hidden = false;
@@ -567,7 +603,8 @@ const adminDocument = `<!doctype html>
       }
       function formatTime(value) { return value ? new Date(value).toLocaleString() : "-"; }
       function setConnection(connected, label) { document.getElementById("connection-dot").className = "connection-dot" + (connected ? " connected" : ""); document.getElementById("connection-label").textContent = label; }
-      function schedulePolling() { clearTimeout(state.timer); if (!document.hidden && state.token) state.timer = setTimeout(function tick() { refreshAll().catch(function () {}); state.timer = setTimeout(tick, 5000); }, 5000); }
+      function poll() { refreshAll().catch(function () {}).finally(schedulePolling); }
+      function schedulePolling() { clearTimeout(state.timer); if (!document.hidden && state.token) state.timer = setTimeout(poll, 5000); }
 
       if (state.token) connect(); else tokenInput.focus();
     }());

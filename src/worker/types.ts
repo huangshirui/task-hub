@@ -89,6 +89,15 @@ export interface TaskLogResult {
   invalidObjects: number;
 }
 
+export interface RunnerStoreListQuery extends RunnerListQuery {
+  limit: number;
+  now: Date;
+}
+
+export interface TaskStoreListQuery extends TaskListQuery {
+  limit: number;
+}
+
 export interface TaskRecord {
   taskId: string;
   runnerId: string;
@@ -155,14 +164,14 @@ export interface WebhookDelivery {
 export interface TaskStore {
   putRunner(runner: RunnerRecord): Promise<void>;
   getRunner(runnerId: string): Promise<RunnerRecord | undefined>;
-  listRunners(): Promise<RunnerRecord[]>;
+  listRunnerViews(query: RunnerStoreListQuery): Promise<Page<RunnerView>>;
   touchRunnerHeartbeat(runnerId: string, timestamp: string): Promise<void>;
   putTask(task: TaskRecord): Promise<void>;
   getTask(taskId: string): Promise<TaskRecord | undefined>;
   findTaskByIdempotencyKey(idempotencyKey: string): Promise<TaskRecord | undefined>;
   enqueueTask(taskId: string): Promise<void>;
   findClaimableTask(runnerId: string, now: Date): Promise<TaskRecord | undefined>;
-  listTasks(query: Omit<TaskListQuery, "limit" | "cursor">): Promise<TaskRecord[]>;
+  listTasks(query: TaskStoreListQuery): Promise<Page<TaskRecord>>;
   findCurrentTask(runnerId: string): Promise<TaskRecord | undefined>;
   saveLogs(taskId: string, leaseId: string, entries: LogEntry[]): Promise<void>;
   getTaskLogs(taskId: string): Promise<TaskLogResult>;

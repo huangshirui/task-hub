@@ -12,6 +12,16 @@ test("deploy workflow generates wrangler.toml from GitHub variables", () => {
   assert.doesNotMatch(workflow, /replace-with-cloudflare/);
 });
 
+test("deploy workflow publishes required Worker secrets", () => {
+  const workflow = readFileSync(".github/workflows/deploy-worker.yml", "utf8");
+
+  for (const secret of ["WEBHOOK_SECRET", "RUNNER_REGISTRATION_TOKEN", "TASK_HUB_ADMIN_TOKEN"]) {
+    assert.match(workflow, new RegExp(`secrets\\.${secret}`));
+    assert.match(workflow, new RegExp(`^\\s{10}${secret}: \\$\\{\\{ secrets\\.${secret} \\}\\}$`, "m"));
+    assert.match(workflow, new RegExp(`^\\s+${secret}$`, "m"));
+  }
+});
+
 test("forkable Cloudflare template is committed instead of real wrangler config", () => {
   const template = readFileSync("cloudflare/wrangler.toml.template", "utf8");
   const gitignore = readFileSync(".gitignore", "utf8");

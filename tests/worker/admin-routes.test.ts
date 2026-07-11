@@ -81,6 +81,47 @@ test("admin API validates filters and returns not found for missing resources", 
   assert.equal(logs.status, 404);
 });
 
+test("admin task submission validates the runtime body", async () => {
+  const worker = createWorker(() => new InMemoryTaskStore());
+  const response = await worker.fetch(
+    adminRequest("/api/admin/tasks", {
+      method: "POST",
+      body: JSON.stringify({
+        runnerId: "runner-a",
+        type: "not-a-task-type",
+        name: "Invalid task",
+        payload: [],
+        timeoutSeconds: "60",
+      }),
+    }),
+    createEnv() as never,
+  );
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid task type" });
+});
+
+test("admin API sanitizes unexpected infrastructure failures", async () => {
+  const store = new InMemoryTaskStore();
+  const service = new TaskHubService(store);
+  const task = await service.submitTask({
+    runnerId: "runner-a",
+    type: "selfcheck",
+    name: "Health check",
+    payload: {},
+    timeoutSeconds: 60,
+  });
+  store.getTaskLogs = async () => {
+    throw new Error("R2 unavailable: internal bucket detail");
+  };
+  const worker = createWorker(() => store);
+
+  const response = await worker.fetch(adminRequest(`/api/admin/tasks/${task.taskId}/logs`), createEnv() as never);
+
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "internal server error" });
+});
+
 function adminRequest(path: string, init: RequestInit = {}): Request {
   const headers = new Headers(init.headers);
   headers.set("authorization", "Bearer admin-secret");

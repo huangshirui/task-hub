@@ -107,7 +107,6 @@ done
 
 [[ "$(id -u)" -eq 0 ]] || die "run this installer as root, for example: curl -fsSL URL | sudo bash -s -- ..."
 [[ -n "$BASE_URL" ]] || die "--base-url is required"
-[[ "$NO_REGISTER" -eq 0 || -n "$RUNNER_ID" ]] || die "--runner-id is required with --no-register"
 [[ "$ACCOUNT" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || die "--account must be a valid Linux account name"
 [[ "$INSTALL_DIR" = /* ]] || die "--install-dir must be an absolute path"
 
@@ -144,6 +143,23 @@ ENV_PATH="/etc/task-hub/runners/$ACCOUNT/runner.env"
 SERVICE_PATH="/etc/systemd/system/taskhub-runner@.service"
 
 mkdir -p "$CONFIG_DIR" "$WORKSPACE_DIR" "$INSTALLED_DIR"
+
+if [[ -z "$RUNNER_ID" && -f "$CONFIG_PATH" ]]; then
+  RUNNER_ID="$(python3 - "$CONFIG_PATH" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+existing_runner_id = config.get("runnerId")
+if not isinstance(existing_runner_id, str) or not existing_runner_id:
+    raise SystemExit("existing runner config does not include runnerId")
+print(existing_runner_id)
+PY
+)"
+fi
+
+[[ "$NO_REGISTER" -eq 0 || -n "$RUNNER_ID" ]] || die "--runner-id is required with --no-register"
 
 if [[ -z "$TOKEN" && -n "${TASK_HUB_RUNNER_TOKEN:-}" ]]; then
   TOKEN="$TASK_HUB_RUNNER_TOKEN"

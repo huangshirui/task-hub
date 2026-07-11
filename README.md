@@ -182,6 +182,8 @@ npx wrangler secret put TASK_HUB_ADMIN_TOKEN
 
 The credential-hashing migration changes how Runner credentials are verified. Re-run registration once for every existing Runner after deploying this version; the Runner ID remains unchanged.
 
+The deploy workflow publishes `WEBHOOK_SECRET`, `RUNNER_REGISTRATION_TOKEN`, and `TASK_HUB_ADMIN_TOKEN` from GitHub Secrets during deployment. A missing value remains fail-closed at runtime.
+
 The repository includes two workflows:
 
 - `.github/workflows/bootstrap-cloudflare.yml`: manually creates the Queue, D1 database, R2 bucket, and KV namespace named by GitHub Variables.

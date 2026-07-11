@@ -23,13 +23,38 @@ test("D1 task listing binds every management filter", async () => {
   };
   const store = new D1TaskStore(db as never);
 
-  const tasks = await store.listTasks({ runnerId: "runner-a", status: "running", type: "selfcheck" });
+  const tasks = await store.listTasks({ runnerId: "runner-a", status: "running", type: "selfcheck", limit: 20 });
 
   assert.match(sql, /runner_id = \?/);
   assert.match(sql, /status = \?/);
   assert.match(sql, /type = \?/);
-  assert.deepEqual(bindings, ["runner-a", "running", "selfcheck"]);
-  assert.equal(tasks[0]?.taskId, "task-a");
+  assert.deepEqual(bindings, ["runner-a", "running", "selfcheck", 21]);
+  assert.equal(tasks.items[0]?.taskId, "task-a");
+  assert.match(sql, /LIMIT \?/);
+});
+
+test("D1 runner listing uses a bounded safe projection", async () => {
+  let sql = "";
+  let bindings: unknown[] = [];
+  const db = {
+    prepare(statement: string) {
+      sql = statement;
+      return {
+        bind(...values: unknown[]) {
+          bindings = values;
+          return { async all() { return { results: [] }; } };
+        },
+      };
+    },
+  };
+  const store = new D1TaskStore(db as never);
+
+  await store.listRunnerViews({ status: "online", limit: 10, now: new Date("2026-07-11T00:00:30.000Z") });
+
+  assert.doesNotMatch(sql, /credential_hash/);
+  assert.match(sql, /LIMIT \?/);
+  assert.match(sql, /current_task_id/);
+  assert.equal(bindings.at(-1), 11);
 });
 
 test("R2 task logs are flattened chronologically and malformed objects are counted", async () => {

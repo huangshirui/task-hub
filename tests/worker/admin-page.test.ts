@@ -27,6 +27,11 @@ test("worker serves the responsive admin console without embedding credentials",
     assert.match(html, /id="task-logs"/);
     assert.match(html, /id="run-selfcheck"/);
     assert.match(html, /sessionStorage/);
+    assert.match(html, /runnerRequestGeneration/);
+    assert.match(html, /taskRequestGeneration/);
+    assert.match(html, /while \(page\.nextCursor\)/);
+    assert.match(html, /finally\(schedulePolling\)/);
+    assert.match(html, /leaseExpiresAt/);
     assert.doesNotMatch(html, /server-only-secret/);
   }
 });

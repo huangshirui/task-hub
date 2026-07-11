@@ -1,5 +1,7 @@
 import { D1TaskStore } from "./d1-store.js";
 import { adminPageResponse } from "./admin-page.js";
+import { AuthenticationError, NotFoundError, ValidationError } from "./errors.js";
+import { constantTimeStringEqual } from "./security.js";
 import { TaskHubService } from "./task-service.js";
 import type {
   CompleteTaskInput,
@@ -65,7 +67,7 @@ export function createWorker(
         }
 
         if (url.pathname.startsWith("/api/admin/")) {
-          if (!env.TASK_HUB_ADMIN_TOKEN || bearerToken(request) !== env.TASK_HUB_ADMIN_TOKEN) {
+          if (!env.TASK_HUB_ADMIN_TOKEN || !constantTimeStringEqual(bearerToken(request), env.TASK_HUB_ADMIN_TOKEN)) {
             return json({ error: "unauthorized" }, 401);
           }
           return await handleAdminRequest(request, url, service);
@@ -135,7 +137,19 @@ export function createWorker(
 
         return json({ error: "not found" }, 404);
       } catch (error) {
-        return json({ error: error instanceof Error ? error.message : "unknown error" }, 400);
+        if (error instanceof ValidationError) {
+          return json({ error: error.message }, 400);
+        }
+        if (error instanceof AuthenticationError) {
+          return json({ error: error.message }, 401);
+        }
+        if (error instanceof NotFoundError) {
+          return json({ error: "not found" }, 404);
+        }
+        if (error instanceof SyntaxError) {
+          return json({ error: "invalid JSON body" }, 400);
+        }
+        return json({ error: "internal server error" }, 500);
       }
     },
 
@@ -205,7 +219,7 @@ function parseEnum<T extends string>(value: string | null, allowed: readonly T[]
     return undefined;
   }
   if (!allowed.includes(value as T)) {
-    throw new Error(`invalid ${name}`);
+    throw new ValidationError(`invalid ${name}`);
   }
   return value as T;
 }
@@ -215,7 +229,7 @@ function parseLimit(value: string | null): number | undefined {
     return undefined;
   }
   if (!/^\d+$/.test(value)) {
-    throw new Error("limit must be an integer between 1 and 100");
+    throw new ValidationError("limit must be an integer between 1 and 100");
   }
   return Number(value);
 }

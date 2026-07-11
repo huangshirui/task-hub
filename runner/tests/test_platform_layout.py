@@ -94,6 +94,38 @@ class PlatformLayoutTest(unittest.TestCase):
             self.assertEqual(result, 0)
             self.assertEqual(config["runnerId"], "runner_generated_01")
 
+    def test_windows_setup_reuses_existing_runner_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = Path(tmp) / "TaskHubRunner"
+            setup_user_runner(
+                app_dir=app_dir,
+                base_url="https://task-hub.example.workers.dev",
+                runner_id="runner_existing_01",
+                runner_token="old-secret",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "TASK_HUB_RUNNER_TOKEN": "new-secret",
+                    "TASK_HUB_REGISTRATION_TOKEN": "registration-secret",
+                },
+            ), patch(
+                "taskhub_runner.platforms.windows.tray.register_runner",
+                return_value="runner_existing_01",
+            ) as register:
+                setup_command(
+                    [
+                        "--base-url",
+                        "https://task-hub.example.workers.dev",
+                        "--app-dir",
+                        str(app_dir),
+                    ]
+                )
+
+            self.assertEqual(register.call_args.kwargs["runner_id"], "runner_existing_01")
+            config = json.loads((app_dir / "runner.json").read_text(encoding="utf-8"))
+            self.assertEqual(config["runnerId"], "runner_existing_01")
+
 
 if __name__ == "__main__":
     unittest.main()

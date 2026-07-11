@@ -21,6 +21,8 @@ python -m taskhub_runner.platforms.windows.tray setup --base-url https://your-wo
 
 The Worker generates the Runner ID and the setup command stores it in `runner.json`. Add `--runner-id runner_windows_alice` when a stable operator-selected ID is required. `--runner-id` remains mandatory with `--no-register` because no Worker response is available in that mode.
 
+If the current user's `runner.json` already exists, setup reuses its ID by default. Pass a different explicit `--runner-id` only when intentionally replacing the identity.
+
 The setup command writes:
 
 - `%LOCALAPPDATA%\TaskHubRunner\runner.json`

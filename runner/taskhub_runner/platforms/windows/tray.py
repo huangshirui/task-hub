@@ -53,17 +53,19 @@ def setup_command(argv: list[str]) -> int:
     if not runner_token:
         raise SystemExit("runner token is required; set TASK_HUB_RUNNER_TOKEN or pass --runner-token")
 
+    app_dir = Path(args.app_dir) if args.app_dir else default_app_dir()
+    runner_id = args.runner_id or existing_runner_id(app_dir)
+
     if args.no_register:
-        if not args.runner_id:
+        if not runner_id:
             raise SystemExit("runner ID is required with --no-register")
-        runner_id = args.runner_id
     else:
         registration_token = args.registration_token or os.environ.get("TASK_HUB_REGISTRATION_TOKEN")
         if not registration_token:
             raise SystemExit("registration token is required; set TASK_HUB_REGISTRATION_TOKEN or pass --registration-token")
         runner_id = register_runner(
             base_url=args.base_url,
-            runner_id=args.runner_id,
+            runner_id=runner_id,
             name=args.name,
             runner_token=runner_token,
             registration_token=registration_token,
@@ -71,7 +73,6 @@ def setup_command(argv: list[str]) -> int:
             capabilities=["runner.selfcheck"],
         )
 
-    app_dir = Path(args.app_dir) if args.app_dir else default_app_dir()
     config_path = setup_user_runner(
         app_dir=app_dir,
         base_url=args.base_url,
@@ -81,6 +82,20 @@ def setup_command(argv: list[str]) -> int:
 
     print(f"Config: {config_path}")
     return 0
+
+
+def existing_runner_id(app_dir: Path) -> str | None:
+    config_path = default_config_path(app_dir)
+    if not config_path.exists():
+        return None
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"existing runner config is invalid: {exc}") from exc
+    runner_id = config.get("runnerId")
+    if not isinstance(runner_id, str) or not runner_id:
+        raise SystemExit("existing runner config does not include runnerId")
+    return runner_id
 
 
 def install_handler_command(argv: list[str]) -> int:

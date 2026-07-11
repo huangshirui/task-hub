@@ -78,3 +78,11 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
+          secrets: |
+            WEBHOOK_SECRET
+            RUNNER_REGISTRATION_TOKEN
+            TASK_HUB_ADMIN_TOKEN
+        env:
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+          RUNNER_REGISTRATION_TOKEN: ${{ secrets.RUNNER_REGISTRATION_TOKEN }}
+          TASK_HUB_ADMIN_TOKEN: ${{ secrets.TASK_HUB_ADMIN_TOKEN }}

@@ -38,6 +38,8 @@ npx wrangler secret put RUNNER_REGISTRATION_TOKEN
 npx wrangler secret put TASK_HUB_ADMIN_TOKEN
 ```
 
+The GitHub Actions deploy step passes these three values through `wrangler-action`'s `secrets` input. Local/manual deploys still require the `wrangler secret put` commands above.
+
 After deploying the credential-hashing release, re-run registration for every existing Runner. This preserves the Runner ID while replacing the legacy stored credential with a hash.
 
 ## Local Deploy

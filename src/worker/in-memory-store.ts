@@ -1,4 +1,16 @@
-import type { LogEntry, RunnerRecord, TaskListQuery, TaskLogResult, TaskRecord, TaskStore, WebhookDelivery } from "./types.js";
+import { decodeRunnerCursor, decodeTaskCursor, encodeRunnerCursor, encodeTaskCursor } from "./pagination.js";
+import type {
+  LogEntry,
+  Page,
+  RunnerRecord,
+  RunnerStoreListQuery,
+  RunnerView,
+  TaskLogResult,
+  TaskRecord,
+  TaskStore,
+  TaskStoreListQuery,
+  WebhookDelivery,
+} from "./types.js";
 
 export class InMemoryTaskStore implements TaskStore {
   readonly runners = new Map<string, RunnerRecord>();
@@ -16,8 +28,22 @@ export class InMemoryTaskStore implements TaskStore {
     return runner ? { ...runner } : undefined;
   }
 
-  async listRunners(): Promise<RunnerRecord[]> {
-    return [...this.runners.values()].map((runner) => ({ ...runner })).sort((a, b) => a.runnerId.localeCompare(b.runnerId));
+  async listRunnerViews(query: RunnerStoreListQuery): Promise<Page<RunnerView>> {
+    const afterRunnerId = decodeRunnerCursor(query.cursor);
+    const views = await Promise.all(
+      [...this.runners.values()]
+        .filter((runner) => !afterRunnerId || runner.runnerId > afterRunnerId)
+        .sort((a, b) => a.runnerId.localeCompare(b.runnerId))
+        .map(async (runner) => runnerView(runner, await this.findCurrentTask(runner.runnerId), query.now)),
+    );
+    const filtered = query.status ? views.filter((runner) => runner.status === query.status) : views;
+    const items = filtered.slice(0, query.limit);
+    return {
+      items,
+      nextCursor: filtered.length > query.limit && items.length
+        ? encodeRunnerCursor(items[items.length - 1]!.runnerId)
+        : undefined,
+    };
   }
 
   async touchRunnerHeartbeat(runnerId: string, timestamp: string): Promise<void> {
@@ -65,17 +91,29 @@ export class InMemoryTaskStore implements TaskStore {
     return selected ? { ...selected } : undefined;
   }
 
-  async listTasks(query: Omit<TaskListQuery, "limit" | "cursor">): Promise<TaskRecord[]> {
-    return [...this.tasks.values()]
+  async listTasks(query: TaskStoreListQuery): Promise<Page<TaskRecord>> {
+    const cursor = decodeTaskCursor(query.cursor);
+    const filtered = [...this.tasks.values()]
       .filter((task) => !query.runnerId || task.runnerId === query.runnerId)
       .filter((task) => !query.status || task.status === query.status)
       .filter((task) => !query.type || task.type === query.type)
+      .filter((task) => !cursor || task.createdAt < cursor.createdAt || (task.createdAt === cursor.createdAt && task.taskId < cursor.taskId))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.taskId.localeCompare(a.taskId))
       .map((task) => ({ ...task }));
+    const items = filtered.slice(0, query.limit);
+    const last = items[items.length - 1];
+    return {
+      items,
+      nextCursor: filtered.length > query.limit && last
+        ? encodeTaskCursor({ createdAt: last.createdAt, taskId: last.taskId })
+        : undefined,
+    };
   }
 
   async findCurrentTask(runnerId: string): Promise<TaskRecord | undefined> {
-    return (await this.listTasks({ runnerId })).find((task) => task.status === "leased" || task.status === "running");
+    return [...this.tasks.values()]
+      .filter((task) => task.runnerId === runnerId && (task.status === "leased" || task.status === "running"))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
   }
 
   async saveLogs(taskId: string, leaseId: string, entries: LogEntry[]): Promise<void> {
@@ -93,4 +131,24 @@ export class InMemoryTaskStore implements TaskStore {
   async saveWebhookDelivery(delivery: WebhookDelivery): Promise<void> {
     this.webhookDeliveries.push(delivery);
   }
+}
+
+function runnerView(runner: RunnerRecord, currentTask: TaskRecord | undefined, now: Date): RunnerView {
+  const ageMs = runner.lastHeartbeatAt ? now.getTime() - new Date(runner.lastHeartbeatAt).getTime() : Number.POSITIVE_INFINITY;
+  const status = ageMs <= 15_000 ? "online" : ageMs <= 60_000 ? "stale" : "offline";
+  return {
+    runnerId: runner.runnerId,
+    name: runner.name,
+    platform: runner.platform,
+    labels: [...runner.labels],
+    taskTypes: [...runner.taskTypes],
+    capabilities: [...runner.capabilities],
+    lastHeartbeatAt: runner.lastHeartbeatAt,
+    status,
+    currentTask: currentTask
+      ? { taskId: currentTask.taskId, name: currentTask.name, status: currentTask.status, updatedAt: currentTask.updatedAt }
+      : undefined,
+    createdAt: runner.createdAt,
+    updatedAt: runner.updatedAt,
+  };
 }

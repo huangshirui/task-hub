@@ -34,6 +34,8 @@ class UbuntuInstallerTest(unittest.TestCase):
         self.assertIn('RUNNER_ID="$(python3 - "$BASE_URL"', content)
         self.assertIn('registered_runner_id = result.get("runnerId")', content)
         self.assertIn('print(registered_runner_id)', content)
+        self.assertIn('if [[ -z "$RUNNER_ID" && -f "$CONFIG_PATH" ]]', content)
+        self.assertIn('existing_runner_id = config.get("runnerId")', content)
 
     def test_installer_uses_account_scoped_paths_and_template_service(self):
         content = INSTALLER.read_text(encoding="utf-8")
