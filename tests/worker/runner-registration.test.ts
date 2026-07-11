@@ -5,6 +5,7 @@ import worker from "../../src/worker/index.js";
 
 const runnerRegistration = {
   runnerId: "runner-linux",
+  name: "Ubuntu Runner",
   credential: "runner-secret",
   platform: "linux",
   labels: ["ubuntu-server"],
@@ -35,10 +36,12 @@ test("runner registration accepts valid registration token", async () => {
   const response = await registerRunner(env, "admin-secret");
 
   assert.equal(response.status, 201);
-  assert.deepEqual(await response.json(), { runnerId: "runner-linux" });
+  assert.deepEqual(await response.json(), { runnerId: "runner-linux", name: "Ubuntu Runner" });
   assert.equal(env.registrations.length, 1);
   assert.equal(env.registrations[0]?.runnerId, "runner-linux");
-  assert.equal(env.registrations[0]?.credential, "runner-secret");
+  assert.equal(env.registrations[0]?.name, "Ubuntu Runner");
+  assert.notEqual(env.registrations[0]?.credentialHash, "runner-secret");
+  assert.equal(env.registrations[0]?.credentialHash.length, 64);
 });
 
 function registerRunner(env: ReturnType<typeof createEnv>, token: string): Promise<Response> {
@@ -56,7 +59,15 @@ function registerRunner(env: ReturnType<typeof createEnv>, token: string): Promi
 }
 
 function createEnv(overrides: { RUNNER_REGISTRATION_TOKEN?: string } = {}) {
-  const registrations: Array<typeof runnerRegistration> = [];
+  const registrations: Array<{
+    runnerId: string;
+    name: string;
+    credentialHash: string;
+    platform: "linux";
+    labels: string[];
+    taskTypes: ["shell"];
+    capabilities: string[];
+  }> = [];
   return {
     registrations,
     RUNNER_REGISTRATION_TOKEN: overrides.RUNNER_REGISTRATION_TOKEN,
@@ -70,11 +81,12 @@ function createEnv(overrides: { RUNNER_REGISTRATION_TOKEN?: string } = {}) {
               async run() {
                 registrations.push({
                   runnerId: String(values[0]),
-                  credential: String(values[1]),
-                  platform: values[2] as "linux",
-                  labels: JSON.parse(String(values[3])) as string[],
-                  taskTypes: JSON.parse(String(values[4])) as ["shell"],
-                  capabilities: JSON.parse(String(values[5])) as string[],
+                  name: String(values[1]),
+                  credentialHash: String(values[2]),
+                  platform: values[3] as "linux",
+                  labels: JSON.parse(String(values[4])) as string[],
+                  taskTypes: JSON.parse(String(values[5])) as ["shell"],
+                  capabilities: JSON.parse(String(values[6])) as string[],
                 });
               },
               async first() {

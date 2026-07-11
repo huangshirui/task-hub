@@ -17,6 +17,7 @@ The repository is split into three layers:
 - **KV:** configured in `wrangler.toml` for short-lived tokens and low-consistency cache use.
 - **Runner:** Python daemon/service that uses only outbound HTTPS.
 - **Task Handler:** local Runner plugins. Ubuntu installs enable `selfcheck` by default; task-specific handlers such as registered-script Shell are installed on demand.
+- **Admin Console:** the Worker-hosted `/admin` page lists runners and tasks, derives online state from authenticated polling, reads task logs, and submits `selfcheck` tasks.
 
 ## Task Flow
 
@@ -51,7 +52,7 @@ Runner registration:
 
 ```json
 {
-  "runnerId": "runner_linux_01",
+  "name": "Build server",
   "credential": "runner-secret",
   "platform": "linux",
   "labels": ["prod"],
@@ -59,6 +60,32 @@ Runner registration:
   "capabilities": ["runner.selfcheck"]
 }
 ```
+
+`runnerId` is optional during registration. When omitted, the Worker returns a generated ID that the installer stores locally. Supply `runnerId` when an operator-controlled stable ID is required. The registration response is:
+
+```json
+{
+  "runnerId": "runner_7db26f65-2ab1-4b60-9967-a9a1ca9e1844",
+  "name": "Build server"
+}
+```
+
+## Admin Console
+
+Open `https://<worker-host>/admin` and connect with `TASK_HUB_ADMIN_TOKEN`. The token remains in browser `sessionStorage` and is sent only as a Bearer token to `/api/admin/*`.
+
+Management endpoints:
+
+```text
+GET  /api/admin/runners
+GET  /api/admin/runners/:runnerId
+GET  /api/admin/tasks
+POST /api/admin/tasks
+GET  /api/admin/tasks/:taskId
+GET  /api/admin/tasks/:taskId/logs
+```
+
+Runner status is derived from the last authenticated claim or task heartbeat: `online` through 15 seconds, `stale` through 60 seconds, and `offline` after 60 seconds or before the first heartbeat.
 
 Handler manifest:
 
@@ -128,8 +155,8 @@ Ubuntu one-line installs enable the `selfcheck` handler first. Install the `shel
 
 1. Create a D1 database, R2 bucket, KV namespace, and Queue.
 2. Copy `cloudflare/wrangler.toml.template` to `wrangler.toml` for local deploys and replace placeholders.
-3. Apply `cloudflare/migrations/0001_initial.sql`.
-4. Set `WEBHOOK_SECRET` and `RUNNER_REGISTRATION_TOKEN` as Worker secrets.
+3. Apply all D1 migrations in `cloudflare/migrations`.
+4. Set `WEBHOOK_SECRET`, `RUNNER_REGISTRATION_TOKEN`, and `TASK_HUB_ADMIN_TOKEN` as Worker secrets.
 5. Deploy with Wrangler.
 
 The current implementation contains the deployable Worker bindings and queue consumer, plus a tested in-memory store for unit tests.
@@ -142,14 +169,18 @@ Configure these repository secrets before using the workflows:
 CLOUDFLARE_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
 RUNNER_REGISTRATION_TOKEN
+TASK_HUB_ADMIN_TOKEN
 ```
 
-`WEBHOOK_SECRET` and `RUNNER_REGISTRATION_TOKEN` should be set as Worker secrets before production use:
+Set all Worker secrets before production use:
 
 ```powershell
 npx wrangler secret put WEBHOOK_SECRET
 npx wrangler secret put RUNNER_REGISTRATION_TOKEN
+npx wrangler secret put TASK_HUB_ADMIN_TOKEN
 ```
+
+The credential-hashing migration changes how Runner credentials are verified. Re-run registration once for every existing Runner after deploying this version; the Runner ID remains unchanged.
 
 The repository includes two workflows:
 

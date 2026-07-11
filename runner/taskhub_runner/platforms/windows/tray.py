@@ -41,7 +41,8 @@ def main(argv: list[str] | None = None) -> int:
 def setup_command(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Set up the current Windows user's Task Hub runner.")
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--runner-id", required=True)
+    parser.add_argument("--runner-id")
+    parser.add_argument("--name")
     parser.add_argument("--runner-token")
     parser.add_argument("--registration-token")
     parser.add_argument("--no-register", action="store_true")
@@ -52,19 +53,31 @@ def setup_command(argv: list[str]) -> int:
     if not runner_token:
         raise SystemExit("runner token is required; set TASK_HUB_RUNNER_TOKEN or pass --runner-token")
 
+    if args.no_register:
+        if not args.runner_id:
+            raise SystemExit("runner ID is required with --no-register")
+        runner_id = args.runner_id
+    else:
+        registration_token = args.registration_token or os.environ.get("TASK_HUB_REGISTRATION_TOKEN")
+        if not registration_token:
+            raise SystemExit("registration token is required; set TASK_HUB_REGISTRATION_TOKEN or pass --registration-token")
+        runner_id = register_runner(
+            base_url=args.base_url,
+            runner_id=args.runner_id,
+            name=args.name,
+            runner_token=runner_token,
+            registration_token=registration_token,
+            task_types=["selfcheck"],
+            capabilities=["runner.selfcheck"],
+        )
+
     app_dir = Path(args.app_dir) if args.app_dir else default_app_dir()
     config_path = setup_user_runner(
         app_dir=app_dir,
         base_url=args.base_url,
-        runner_id=args.runner_id,
+        runner_id=runner_id,
         runner_token=runner_token,
     )
-
-    if not args.no_register:
-        registration_token = args.registration_token or os.environ.get("TASK_HUB_REGISTRATION_TOKEN")
-        if not registration_token:
-            raise SystemExit("registration token is required; set TASK_HUB_REGISTRATION_TOKEN or pass --registration-token")
-        register_current_config(config_path, runner_token, registration_token)
 
     print(f"Config: {config_path}")
     return 0
@@ -104,17 +117,43 @@ def install_handler_command(argv: list[str]) -> int:
 def register_current_config(config_path: Path, runner_token: str, registration_token: str) -> None:
     config = json.loads(config_path.read_text(encoding="utf-8"))
     handler_info = describe_config_handlers(config_path)
+    registered_id = register_runner(
+        base_url=config["baseUrl"],
+        runner_id=config["runnerId"],
+        name=None,
+        runner_token=runner_token,
+        registration_token=registration_token,
+        task_types=handler_info.task_types,
+        capabilities=handler_info.capabilities,
+    )
+    if registered_id != config["runnerId"]:
+        raise SystemExit("runner re-registration returned a different runner ID")
+
+
+def register_runner(
+    *,
+    base_url: str,
+    runner_id: str | None,
+    name: str | None,
+    runner_token: str,
+    registration_token: str,
+    task_types: list[str],
+    capabilities: list[str],
+) -> str:
     payload = {
-        "runnerId": config["runnerId"],
         "credential": runner_token,
         "platform": "windows",
         "labels": ["windows-user"],
-        "taskTypes": handler_info.task_types,
-        "capabilities": handler_info.capabilities,
+        "taskTypes": task_types,
+        "capabilities": capabilities,
     }
+    if runner_id:
+        payload["runnerId"] = runner_id
+    if name:
+        payload["name"] = name
     body = json.dumps(payload).encode("utf-8")
     req = request.Request(
-        f"{config['baseUrl'].rstrip('/')}/runners/register",
+        f"{base_url.rstrip('/')}/runners/register",
         data=body,
         method="POST",
         headers={
@@ -124,10 +163,14 @@ def register_current_config(config_path: Path, runner_token: str, registration_t
     )
     try:
         with request.urlopen(req, timeout=30) as response:
-            response.read()
+            result = json.loads(response.read().decode("utf-8"))
     except error.HTTPError as exc:
         details = exc.read().decode("utf-8", errors="replace")
         raise SystemExit(f"runner registration failed: HTTP {exc.code} {details}") from exc
+    registered_id = result.get("runnerId")
+    if not isinstance(registered_id, str) or not registered_id:
+        raise SystemExit("runner registration response did not include runnerId")
+    return registered_id
 
 
 def default_log_path() -> Path:

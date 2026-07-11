@@ -9,11 +9,12 @@ Install the runner as a `systemd` service:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo bash -s -- \
   --base-url https://your-worker.workers.dev \
-  --account taskhub \
-  --runner-id runner_ubuntu_01
+  --account taskhub
 ```
 
-The installer prompts for `TASK_HUB_REGISTRATION_TOKEN`, registers the runner with the Worker, generates a runner credential, and writes it to `/etc/task-hub/runners/<account>/runner.env`. The default install only enables the `selfcheck` handler.
+The installer prompts for `TASK_HUB_REGISTRATION_TOKEN`, registers the runner with the Worker, receives a generated Runner ID, generates a runner credential, and writes both values to the account-scoped configuration. The default install only enables the `selfcheck` handler.
+
+Pass `--runner-id runner_ubuntu_01` when a stable operator-selected ID is preferred. Without it, the Worker generates an ID such as `runner_7db26f65-...` and the installer writes that value to `runner.json`.
 
 The installer:
 
@@ -25,7 +26,7 @@ The installer:
 - stores the runner credential in `/etc/task-hub/runners/<account>/runner.env`
 - creates and starts `taskhub-runner@<account>.service`
 
-Install another account on the same server by changing `--account` and `--runner-id`:
+Install another account on the same server by changing `--account`; optionally supply a stable `--runner-id`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo bash -s -- \
@@ -41,8 +42,7 @@ curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/pl
 less install.sh
 sudo bash install.sh \
   --base-url https://your-worker.workers.dev \
-  --account taskhub \
-  --runner-id runner_ubuntu_01
+  --account taskhub
 ```
 
 The registration token must match the Worker secret `RUNNER_REGISTRATION_TOKEN`.
@@ -52,8 +52,7 @@ For non-interactive automation, pass the registration token through the command 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/huangshirui/task-hub/main/runner/platforms/ubuntu_server/install.sh | sudo TASK_HUB_REGISTRATION_TOKEN='replace-with-registration-secret' bash -s -- \
   --base-url https://your-worker.workers.dev \
-  --account taskhub \
-  --runner-id runner_ubuntu_01
+  --account taskhub
 ```
 
 To skip cloud registration and use a pre-registered runner credential:

@@ -16,8 +16,10 @@ Set up the current Windows user:
 set PYTHONPATH=runner
 set TASK_HUB_RUNNER_TOKEN=replace-with-runner-secret
 set TASK_HUB_REGISTRATION_TOKEN=replace-with-registration-secret
-python -m taskhub_runner.platforms.windows.tray setup --base-url https://your-worker.workers.dev --runner-id runner_windows_alice
+python -m taskhub_runner.platforms.windows.tray setup --base-url https://your-worker.workers.dev --name "Alice workstation"
 ```
+
+The Worker generates the Runner ID and the setup command stores it in `runner.json`. Add `--runner-id runner_windows_alice` when a stable operator-selected ID is required. `--runner-id` remains mandatory with `--no-register` because no Worker response is available in that mode.
 
 The setup command writes:
 

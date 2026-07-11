@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from taskhub_runner.config import load_runner_config
 from taskhub_runner.platforms.windows.setup import default_app_dir, default_config_path, setup_user_runner
+from taskhub_runner.platforms.windows.tray import setup_command
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -66,6 +67,32 @@ class PlatformLayoutTest(unittest.TestCase):
             self.assertTrue((app_dir / "installed-handlers").is_dir())
             self.assertTrue((app_dir / "logs").is_dir())
             self.assertIn("TASK_HUB_RUNNER_TOKEN=runner-secret", env_content)
+
+    def test_windows_setup_persists_worker_generated_runner_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app_dir = Path(tmp) / "TaskHubRunner"
+            with patch.dict(
+                os.environ,
+                {
+                    "TASK_HUB_RUNNER_TOKEN": "runner-secret",
+                    "TASK_HUB_REGISTRATION_TOKEN": "registration-secret",
+                },
+            ), patch(
+                "taskhub_runner.platforms.windows.tray.register_runner",
+                return_value="runner_generated_01",
+            ):
+                result = setup_command(
+                    [
+                        "--base-url",
+                        "https://task-hub.example.workers.dev",
+                        "--app-dir",
+                        str(app_dir),
+                    ]
+                )
+
+            config = json.loads((app_dir / "runner.json").read_text(encoding="utf-8"))
+            self.assertEqual(result, 0)
+            self.assertEqual(config["runnerId"], "runner_generated_01")
 
 
 if __name__ == "__main__":

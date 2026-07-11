@@ -25,6 +25,15 @@ class UbuntuInstallerTest(unittest.TestCase):
 
         self.assertIn("--no-register", content)
         self.assertIn("NO_REGISTER", content)
+        self.assertIn('[[ "$NO_REGISTER" -eq 0 || -n "$RUNNER_ID" ]]', content)
+
+    def test_installer_persists_worker_generated_runner_id(self):
+        content = INSTALLER.read_text(encoding="utf-8")
+
+        self.assertNotIn('[[ -n "$RUNNER_ID" ]] || die "--runner-id is required"', content)
+        self.assertIn('RUNNER_ID="$(python3 - "$BASE_URL"', content)
+        self.assertIn('registered_runner_id = result.get("runnerId")', content)
+        self.assertIn('print(registered_runner_id)', content)
 
     def test_installer_uses_account_scoped_paths_and_template_service(self):
         content = INSTALLER.read_text(encoding="utf-8")

@@ -17,11 +17,11 @@ usage() {
 Install the Task Hub Ubuntu runner.
 
 Usage:
-  sudo bash install.sh --base-url URL --runner-id ID [options]
+  sudo bash install.sh --base-url URL [options]
 
 Options:
   --base-url URL       Deployed Cloudflare Worker URL.
-  --runner-id ID       Runner ID registered with the Worker.
+  --runner-id ID       Optional stable Runner ID. The Worker generates one when omitted.
   --token TOKEN        Runner credential for this runner ID. Defaults to a generated token.
   --registration-token TOKEN
                        Admin token allowed to register runners. Prefer the prompt or TASK_HUB_REGISTRATION_TOKEN.
@@ -107,7 +107,7 @@ done
 
 [[ "$(id -u)" -eq 0 ]] || die "run this installer as root, for example: curl -fsSL URL | sudo bash -s -- ..."
 [[ -n "$BASE_URL" ]] || die "--base-url is required"
-[[ -n "$RUNNER_ID" ]] || die "--runner-id is required"
+[[ "$NO_REGISTER" -eq 0 || -n "$RUNNER_ID" ]] || die "--runner-id is required with --no-register"
 [[ "$ACCOUNT" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] || die "--account must be a valid Linux account name"
 [[ "$INSTALL_DIR" = /* ]] || die "--install-dir must be an absolute path"
 
@@ -183,20 +183,21 @@ if [[ "$NO_REGISTER" -eq 0 ]]; then
   [[ -n "$REGISTRATION_TOKEN" ]] || die "registration token is required"
   [[ "$REGISTRATION_TOKEN" != *$'\n'* ]] || die "--registration-token must not contain newlines"
 
-  python3 - "$BASE_URL" "$RUNNER_ID" "$TOKEN" "$REGISTRATION_TOKEN" <<'PY'
+  RUNNER_ID="$(python3 - "$BASE_URL" "$RUNNER_ID" "$TOKEN" "$REGISTRATION_TOKEN" <<'PY'
 import json
 import sys
 from urllib import error, request
 
 base_url, runner_id, credential, registration_token = sys.argv[1:5]
 payload = {
-    "runnerId": runner_id,
     "credential": credential,
     "platform": "linux",
     "labels": ["ubuntu-server"],
     "taskTypes": ["selfcheck"],
     "capabilities": ["runner.selfcheck"],
 }
+if runner_id:
+    payload["runnerId"] = runner_id
 body = json.dumps(payload).encode("utf-8")
 req = request.Request(
     f"{base_url.rstrip('/')}/runners/register",
@@ -209,12 +210,19 @@ req = request.Request(
 )
 try:
     with request.urlopen(req, timeout=30) as response:
-        response.read()
+        result = json.loads(response.read().decode("utf-8"))
 except error.HTTPError as exc:
     details = exc.read().decode("utf-8", errors="replace")
     raise SystemExit(f"runner registration failed: HTTP {exc.code} {details}") from exc
+registered_runner_id = result.get("runnerId")
+if not isinstance(registered_runner_id, str) or not registered_runner_id:
+    raise SystemExit("runner registration response did not include runnerId")
+print(registered_runner_id)
 PY
+)"
 fi
+
+[[ -n "$RUNNER_ID" ]] || die "runner ID is required"
 
 python3 - "$CONFIG_PATH" "$BASE_URL" "$RUNNER_ID" "$WORKSPACE_DIR" "$INSTALL_DIR" "$SCRIPTS_PATH" <<'PY'
 import json
@@ -275,6 +283,7 @@ systemctl daemon-reload
 systemctl enable --now "$SERVICE_NAME@$ACCOUNT"
 
 echo "Task Hub runner installed."
+echo "Runner ID: $RUNNER_ID"
 echo "Service: $SERVICE_NAME@$ACCOUNT"
 echo "Config: $CONFIG_PATH"
 echo "Logs: journalctl -u $SERVICE_NAME@$ACCOUNT -f"

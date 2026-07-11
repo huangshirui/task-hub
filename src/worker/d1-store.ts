@@ -1,4 +1,12 @@
-import type { LogEntry, RunnerRegistration, TaskRecord, TaskStore, WebhookDelivery } from "./types.js";
+import type {
+  LogEntry,
+  RunnerRecord,
+  TaskListQuery,
+  TaskLogResult,
+  TaskRecord,
+  TaskStore,
+  WebhookDelivery,
+} from "./types.js";
 
 interface QueueBinding {
   send(message: unknown): Promise<unknown>;
@@ -6,6 +14,12 @@ interface QueueBinding {
 
 interface R2Binding {
   put(key: string, value: string | ArrayBuffer | ReadableStream): Promise<unknown>;
+  list(options: { prefix: string; cursor?: string }): Promise<{
+    objects: Array<{ key: string }>;
+    truncated: boolean;
+    cursor?: string;
+  }>;
+  get(key: string): Promise<{ text(): Promise<string> } | null>;
 }
 
 export class D1TaskStore implements TaskStore {
@@ -15,46 +29,67 @@ export class D1TaskStore implements TaskStore {
     private readonly objects?: R2Binding,
   ) {}
 
-  async putRunner(registration: RunnerRegistration): Promise<void> {
+  async putRunner(runner: RunnerRecord): Promise<void> {
     await this.db
       .prepare(
         `INSERT INTO runners (
-          runner_id, credential_hash, platform, labels_json, task_types_json, capabilities_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          runner_id, name, credential_hash, platform, labels_json, task_types_json, capabilities_json,
+          last_heartbeat_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(runner_id) DO UPDATE SET
+          name = excluded.name,
           credential_hash = excluded.credential_hash,
           platform = excluded.platform,
           labels_json = excluded.labels_json,
           task_types_json = excluded.task_types_json,
           capabilities_json = excluded.capabilities_json,
+          last_heartbeat_at = COALESCE(excluded.last_heartbeat_at, runners.last_heartbeat_at),
           updated_at = excluded.updated_at`,
       )
       .bind(
-        registration.runnerId,
-        registration.credential,
-        registration.platform,
-        JSON.stringify(registration.labels),
-        JSON.stringify(registration.taskTypes),
-        JSON.stringify(registration.capabilities),
-        new Date().toISOString(),
-        new Date().toISOString(),
+        runner.runnerId,
+        runner.name,
+        runner.credentialHash,
+        runner.platform,
+        JSON.stringify(runner.labels),
+        JSON.stringify(runner.taskTypes),
+        JSON.stringify(runner.capabilities),
+        runner.lastHeartbeatAt ?? null,
+        runner.createdAt,
+        runner.updatedAt,
       )
       .run();
   }
 
-  async getRunner(runnerId: string): Promise<RunnerRegistration | undefined> {
+  async getRunner(runnerId: string): Promise<RunnerRecord | undefined> {
     const row = await this.db.prepare("SELECT * FROM runners WHERE runner_id = ?").bind(runnerId).first<Record<string, unknown>>();
     if (!row) {
       return undefined;
     }
     return {
       runnerId: String(row.runner_id),
-      credential: String(row.credential_hash),
-      platform: row.platform as RunnerRegistration["platform"],
+      name: row.name ? String(row.name) : String(row.runner_id),
+      credentialHash: String(row.credential_hash),
+      platform: row.platform as RunnerRecord["platform"],
       labels: JSON.parse(String(row.labels_json)) as string[],
-      taskTypes: JSON.parse(String(row.task_types_json)) as RunnerRegistration["taskTypes"],
+      taskTypes: JSON.parse(String(row.task_types_json)) as RunnerRecord["taskTypes"],
       capabilities: JSON.parse(String(row.capabilities_json)) as string[],
+      lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined,
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
     };
+  }
+
+  async listRunners(): Promise<RunnerRecord[]> {
+    const result = await this.db.prepare("SELECT * FROM runners ORDER BY runner_id ASC").all<Record<string, unknown>>();
+    return result.results.map(runnerFromRow);
+  }
+
+  async touchRunnerHeartbeat(runnerId: string, timestamp: string): Promise<void> {
+    await this.db
+      .prepare("UPDATE runners SET last_heartbeat_at = ?, updated_at = ? WHERE runner_id = ?")
+      .bind(timestamp, timestamp, runnerId)
+      .run();
   }
 
   async putTask(task: TaskRecord): Promise<void> {
@@ -126,9 +161,77 @@ export class D1TaskStore implements TaskStore {
     return row ? taskFromRow(row) : undefined;
   }
 
+  async listTasks(query: Omit<TaskListQuery, "limit" | "cursor">): Promise<TaskRecord[]> {
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    if (query.runnerId) {
+      conditions.push("runner_id = ?");
+      values.push(query.runnerId);
+    }
+    if (query.status) {
+      conditions.push("status = ?");
+      values.push(query.status);
+    }
+    if (query.type) {
+      conditions.push("type = ?");
+      values.push(query.type);
+    }
+    const where = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
+    const result = await this.db
+      .prepare(`SELECT * FROM tasks${where} ORDER BY created_at DESC, task_id DESC`)
+      .bind(...values)
+      .all<Record<string, unknown>>();
+    return result.results.map(taskFromRow);
+  }
+
+  async findCurrentTask(runnerId: string): Promise<TaskRecord | undefined> {
+    const row = await this.db
+      .prepare(
+        "SELECT * FROM tasks WHERE runner_id = ? AND status IN ('leased', 'running') ORDER BY updated_at DESC LIMIT 1",
+      )
+      .bind(runnerId)
+      .first<Record<string, unknown>>();
+    return row ? taskFromRow(row) : undefined;
+  }
+
   async saveLogs(taskId: string, leaseId: string, entries: LogEntry[]): Promise<void> {
     const key = `tasks/${taskId}/logs/${Date.now()}-${leaseId}.json`;
     await this.objects?.put(key, JSON.stringify(entries));
+  }
+
+  async getTaskLogs(taskId: string): Promise<TaskLogResult> {
+    if (!this.objects) {
+      return { entries: [], invalidObjects: 0 };
+    }
+    const keys: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await this.objects.list({ prefix: `tasks/${taskId}/logs/`, cursor });
+      keys.push(...page.objects.map((object) => object.key));
+      cursor = page.truncated ? page.cursor : undefined;
+    } while (cursor);
+
+    const entries: LogEntry[] = [];
+    let invalidObjects = 0;
+    for (const key of keys.sort()) {
+      const object = await this.objects.get(key);
+      if (!object) {
+        invalidObjects += 1;
+        continue;
+      }
+      try {
+        const batch = JSON.parse(await object.text()) as unknown;
+        if (!Array.isArray(batch) || !batch.every(isLogEntry)) {
+          invalidObjects += 1;
+          continue;
+        }
+        entries.push(...batch);
+      } catch {
+        invalidObjects += 1;
+      }
+    }
+    entries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    return { entries, invalidObjects };
   }
 
   async saveWebhookDelivery(delivery: WebhookDelivery): Promise<void> {
@@ -149,6 +252,33 @@ export class D1TaskStore implements TaskStore {
       )
       .run();
   }
+}
+
+function runnerFromRow(row: Record<string, unknown>): RunnerRecord {
+  return {
+    runnerId: String(row.runner_id),
+    name: row.name ? String(row.name) : String(row.runner_id),
+    credentialHash: String(row.credential_hash),
+    platform: row.platform as RunnerRecord["platform"],
+    labels: JSON.parse(String(row.labels_json)) as string[],
+    taskTypes: JSON.parse(String(row.task_types_json)) as RunnerRecord["taskTypes"],
+    capabilities: JSON.parse(String(row.capabilities_json)) as string[],
+    lastHeartbeatAt: row.last_heartbeat_at ? String(row.last_heartbeat_at) : undefined,
+    createdAt: String(row.created_at),
+    updatedAt: String(row.updated_at),
+  };
+}
+
+function isLogEntry(value: unknown): value is LogEntry {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const entry = value as Record<string, unknown>;
+  return (
+    (entry.stream === "stdout" || entry.stream === "stderr" || entry.stream === "system") &&
+    typeof entry.message === "string" &&
+    typeof entry.timestamp === "string"
+  );
 }
 
 function taskFromRow(row: Record<string, unknown>): TaskRecord {

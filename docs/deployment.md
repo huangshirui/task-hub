@@ -30,12 +30,15 @@ It performs:
 
 ## Worker Secret
 
-Set `WEBHOOK_SECRET` and `RUNNER_REGISTRATION_TOKEN` as GitHub Secrets and, for local/manual deploys, as Cloudflare Worker secrets:
+Set `WEBHOOK_SECRET`, `RUNNER_REGISTRATION_TOKEN`, and `TASK_HUB_ADMIN_TOKEN` as GitHub Secrets and, for local/manual deploys, as Cloudflare Worker secrets:
 
 ```powershell
 npx wrangler secret put WEBHOOK_SECRET
 npx wrangler secret put RUNNER_REGISTRATION_TOKEN
+npx wrangler secret put TASK_HUB_ADMIN_TOKEN
 ```
+
+After deploying the credential-hashing release, re-run registration for every existing Runner. This preserves the Runner ID while replacing the legacy stored credential with a hash.
 
 ## Local Deploy
 
@@ -47,5 +50,7 @@ npm.cmd test
 npx wrangler d1 migrations apply <database-name> --remote
 npx wrangler deploy
 ```
+
+After deployment, open `https://<worker-host>/admin` and use `TASK_HUB_ADMIN_TOKEN` to verify Runner discovery, online state, task submission, status, results, and logs.
 
 `wrangler.toml` is intentionally ignored because it contains account-specific resource bindings.

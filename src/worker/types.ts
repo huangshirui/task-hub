@@ -11,6 +11,7 @@ export type TaskStatus =
   | "expired";
 
 export type TerminalTaskStatus = "succeeded" | "failed" | "canceled";
+export type RunnerStatus = "online" | "stale" | "offline";
 
 export interface SubmitTaskInput {
   runnerId?: string;
@@ -23,13 +24,69 @@ export interface SubmitTaskInput {
   idempotencyKey?: string;
 }
 
-export interface RunnerRegistration {
-  runnerId: string;
+export interface RunnerRegistrationInput {
+  runnerId?: string;
+  name?: string;
   credential: string;
   platform: "linux" | "windows" | "darwin";
   labels: string[];
   taskTypes: TaskType[];
   capabilities: string[];
+}
+
+export interface RunnerRecord {
+  runnerId: string;
+  name: string;
+  credentialHash: string;
+  platform: "linux" | "windows" | "darwin";
+  labels: string[];
+  taskTypes: TaskType[];
+  capabilities: string[];
+  lastHeartbeatAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RunnerView {
+  runnerId: string;
+  name: string;
+  platform: RunnerRecord["platform"];
+  labels: string[];
+  taskTypes: TaskType[];
+  capabilities: string[];
+  lastHeartbeatAt?: string;
+  status: RunnerStatus;
+  currentTask?: Pick<TaskRecord, "taskId" | "name" | "status" | "updatedAt">;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RunnerDetail extends RunnerView {
+  recentTasks: TaskRecord[];
+}
+
+export interface RunnerListQuery {
+  status?: RunnerStatus;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface TaskListQuery {
+  runnerId?: string;
+  status?: TaskStatus;
+  type?: TaskType;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface Page<T> {
+  items: T[];
+  nextCursor?: string;
+}
+
+export interface TaskLogResult {
+  entries: LogEntry[];
+  invalidObjects: number;
 }
 
 export interface TaskRecord {
@@ -96,13 +153,18 @@ export interface WebhookDelivery {
 }
 
 export interface TaskStore {
-  putRunner(registration: RunnerRegistration): Promise<void>;
-  getRunner(runnerId: string): Promise<RunnerRegistration | undefined>;
+  putRunner(runner: RunnerRecord): Promise<void>;
+  getRunner(runnerId: string): Promise<RunnerRecord | undefined>;
+  listRunners(): Promise<RunnerRecord[]>;
+  touchRunnerHeartbeat(runnerId: string, timestamp: string): Promise<void>;
   putTask(task: TaskRecord): Promise<void>;
   getTask(taskId: string): Promise<TaskRecord | undefined>;
   findTaskByIdempotencyKey(idempotencyKey: string): Promise<TaskRecord | undefined>;
   enqueueTask(taskId: string): Promise<void>;
   findClaimableTask(runnerId: string, now: Date): Promise<TaskRecord | undefined>;
+  listTasks(query: Omit<TaskListQuery, "limit" | "cursor">): Promise<TaskRecord[]>;
+  findCurrentTask(runnerId: string): Promise<TaskRecord | undefined>;
   saveLogs(taskId: string, leaseId: string, entries: LogEntry[]): Promise<void>;
+  getTaskLogs(taskId: string): Promise<TaskLogResult>;
   saveWebhookDelivery(delivery: WebhookDelivery): Promise<void>;
 }

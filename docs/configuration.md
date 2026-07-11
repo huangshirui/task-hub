@@ -48,11 +48,16 @@ CLOUDFLARE_API_TOKEN
 CLOUDFLARE_ACCOUNT_ID
 WEBHOOK_SECRET
 RUNNER_REGISTRATION_TOKEN
+TASK_HUB_ADMIN_TOKEN
 ```
 
 Do not commit API tokens, Worker secrets, Runner credentials, or real local runner config.
 
 `RUNNER_REGISTRATION_TOKEN` protects `POST /runners/register`. Ubuntu one-line installs prompt for this value, use it once to register the runner, and then store only the generated runner credential on the runner host.
+
+`TASK_HUB_ADMIN_TOKEN` protects every endpoint under `/api/admin/*`. The `/admin` page requests this value from the operator and stores it only in browser `sessionStorage`. Do not reuse `RUNNER_REGISTRATION_TOKEN` as the admin token.
+
+Runner credentials are stored as SHA-256 hashes in D1. Existing Runner rows created before this behavior was deployed contain legacy plaintext values and must be re-registered once.
 
 ## Runner
 
