@@ -2,6 +2,7 @@ node_modules/
 dist/
 .wrangler/
 .tmp/
+.worktrees/
 .dev.vars
 .env
 .env*
