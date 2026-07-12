@@ -190,6 +190,10 @@ export class TaskHubService {
     };
   }
 
+  async authenticateRunnerConnection(runnerId: string, credential: string): Promise<void> {
+    await this.authenticateRunner(runnerId, credential);
+  }
+
   async heartbeat(taskId: string, leaseId: string, runnerId: string, credential: string): Promise<TaskRecord> {
     await this.authenticateRunner(runnerId, credential);
     const task = await this.requireLease(taskId, leaseId, runnerId);

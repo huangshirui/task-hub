@@ -13,6 +13,34 @@ export type TaskStatus =
 export type TerminalTaskStatus = "succeeded" | "failed" | "canceled";
 export type RunnerStatus = "online" | "stale" | "offline";
 
+export type RunnerHubAttachment =
+  | { role: "runner"; runnerId: string }
+  | { role: "admin" };
+
+export interface TaskAvailableEvent {
+  type: "task_available";
+  taskId: string;
+}
+
+export type AdminHubEvent =
+  | {
+      type: "task_changed";
+      taskId: string;
+      runnerId: string;
+      status: TaskStatus;
+    }
+  | {
+      type: "runner_presence_changed";
+      runnerId: string;
+      online: boolean;
+    };
+
+export interface RunnerHubPresence {
+  onlineRunnerIds: string[];
+  runnerConnections: number;
+  adminConnections: number;
+}
+
 export interface SubmitTaskInput {
   runnerId?: string;
   type: TaskType;
