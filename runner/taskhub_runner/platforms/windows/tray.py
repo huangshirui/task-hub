@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from urllib import error, request
 
-from ...cli import build_runner
+from ...cli import build_runner, build_wake_listener
 from ...config import load_runner_config
 from ...handler_installer import describe_config_handlers, install_handler
 from .controller import RunnerLoopController
@@ -31,7 +31,9 @@ def main(argv: list[str] | None = None) -> int:
     log_path = Path(args.log_path) if args.log_path else default_log_path()
     controller = RunnerLoopController(
         runner=build_runner(config_path),
-        poll_interval_seconds=config.poll_interval_seconds,
+        wake_listener=build_wake_listener(config),
+        fallback_poll_interval_seconds=config.fallback_poll_interval_seconds,
+        jitter_ratio=config.fallback_jitter_ratio,
         log_path=log_path,
     )
 

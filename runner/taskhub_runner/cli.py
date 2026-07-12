@@ -3,14 +3,15 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
-import time
 from pathlib import Path
 from typing import Callable
 
 from .client import RunnerClient
 from .config import RunnerConfig, load_runner_config
 from .core import TaskRunner
+from .loop import run_runner_loop
 from .plugin_loader import load_handlers
+from .wake import WakeListener
 
 ClientFactory = Callable[[str, str, str], object]
 
@@ -19,7 +20,17 @@ def build_runner(config_path: Path, client_factory: ClientFactory = RunnerClient
     config = load_runner_config(config_path)
     client = client_factory(config.base_url, config.runner_id, config.credential)
     handlers = build_handlers(config)
-    return TaskRunner(client=client, handlers=handlers, workspace_root=config.workspace_root, runner_id=config.runner_id)
+    return TaskRunner(
+        client=client,
+        handlers=handlers,
+        workspace_root=config.workspace_root,
+        runner_id=config.runner_id,
+        heartbeat_interval_seconds=config.heartbeat_interval_seconds,
+    )
+
+
+def build_wake_listener(config: RunnerConfig) -> WakeListener:
+    return WakeListener(base_url=config.base_url, runner_id=config.runner_id, credential=config.credential)
 
 
 def build_handlers(config: RunnerConfig):
@@ -35,11 +46,13 @@ def main(argv: list[str] | None = None, client_factory: ClientFactory = RunnerCl
     config_path = Path(args.config)
     config = load_runner_config(config_path)
     runner = build_runner(config_path, client_factory=client_factory)
+    wake_listener = build_wake_listener(config)
     stop_requested = False
 
     def request_stop(signum, frame):
         nonlocal stop_requested
         stop_requested = True
+        wake_listener.interrupt()
 
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
@@ -48,10 +61,13 @@ def main(argv: list[str] | None = None, client_factory: ClientFactory = RunnerCl
         runner.run_once()
         return 0
 
-    while not stop_requested:
-        did_work = runner.run_once()
-        if not did_work:
-            time.sleep(config.poll_interval_seconds)
+    run_runner_loop(
+        runner,
+        wake_listener,
+        fallback_poll_interval_seconds=config.fallback_poll_interval_seconds,
+        jitter_ratio=config.fallback_jitter_ratio,
+        stop_requested=lambda: stop_requested,
+    )
     return 0
 
 

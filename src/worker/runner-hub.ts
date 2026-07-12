@@ -10,6 +10,7 @@ const ADMIN_TAG = "admin";
 const MAX_TAG_LENGTH = 256;
 const ROLE_HEADER = "x-task-hub-role";
 const RUNNER_ID_HEADER = "x-task-hub-runner-id";
+const TASK_STATUSES = new Set(["queued", "pending_runner", "leased", "running", "succeeded", "failed", "canceled", "expired"]);
 
 type WebSocketPairValue = { 0: WebSocket; 1: WebSocket };
 type WebSocketPairFactory = () => WebSocketPairValue;
@@ -21,7 +22,17 @@ export class RunnerHub {
     private readonly webSocketPairFactory: WebSocketPairFactory = () => new WebSocketPair(),
   ) {}
 
-  fetch(request: Request): Response {
+  fetch(request: Request): Response | Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === "/task-available" && request.method === "POST") {
+      return this.handleTaskAvailable(request);
+    }
+    if (url.pathname === "/admin-event" && request.method === "POST") {
+      return this.handleAdminEvent(request);
+    }
+    if (url.pathname === "/presence" && request.method === "GET") {
+      return jsonResponse(this.getPresence());
+    }
     if (request.method !== "GET" || request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("WebSocket upgrade required", { status: 426 });
     }
@@ -100,6 +111,22 @@ export class RunnerHub {
     }
   }
 
+  private async handleTaskAvailable(request: Request): Promise<Response> {
+    const body = await readJson(request);
+    if (!isRecord(body) || typeof body.runnerId !== "string" || typeof body.taskId !== "string") {
+      return jsonResponse({ error: "invalid task notification" }, 400);
+    }
+    return jsonResponse({ delivered: this.notifyTaskAvailable(body.runnerId, body.taskId) });
+  }
+
+  private async handleAdminEvent(request: Request): Promise<Response> {
+    const body = await readJson(request);
+    if (!isAdminHubEvent(body)) {
+      return jsonResponse({ error: "invalid admin event" }, 400);
+    }
+    return jsonResponse({ delivered: this.broadcastAdminEvent(body) });
+  }
+
   private handleDisconnectedSocket(socket: WebSocket): void {
     const attachment = readAttachment(socket);
     socket.serializeAttachment(null);
@@ -111,6 +138,38 @@ export class RunnerHub {
       });
     }
   }
+}
+
+async function readJson(request: Request): Promise<unknown> {
+  try {
+    return await request.json();
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isAdminHubEvent(value: unknown): value is AdminHubEvent {
+  if (!isRecord(value) || typeof value.runnerId !== "string") {
+    return false;
+  }
+  if (value.type === "runner_presence_changed") {
+    return typeof value.online === "boolean";
+  }
+  return value.type === "task_changed"
+    && typeof value.taskId === "string"
+    && typeof value.status === "string"
+    && TASK_STATUSES.has(value.status);
+}
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
 }
 
 function runnerTag(runnerId: string): string {

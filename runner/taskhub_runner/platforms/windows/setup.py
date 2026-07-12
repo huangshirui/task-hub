@@ -37,7 +37,9 @@ def setup_user_runner(*, app_dir: Path, base_url: str, runner_id: str, runner_to
         "runnerId": runner_id,
         "credentialEnv": "TASK_HUB_RUNNER_TOKEN",
         "workspaceRoot": str(workspace_root),
-        "pollIntervalSeconds": 5,
+        "fallbackPollIntervalSeconds": 600,
+        "fallbackJitterRatio": 0.1,
+        "heartbeatIntervalSeconds": 20,
         "handlerPaths": [str(_runner_root() / "handlers" / "builtin_selfcheck")],
         "scriptRegistryPath": str(scripts_path),
     }

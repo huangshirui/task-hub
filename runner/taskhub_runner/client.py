@@ -22,6 +22,12 @@ class RunnerClient:
             {"leaseId": lease_id, "runnerId": self.runner_id, "entries": entries},
         )
 
+    def heartbeat(self, task_id: str, lease_id: str) -> None:
+        self._post(
+            f"/tasks/{task_id}/heartbeat",
+            {"leaseId": lease_id, "runnerId": self.runner_id},
+        )
+
     def complete(self, task_id: str, lease_id: str, body: dict[str, Any]) -> None:
         payload = {"leaseId": lease_id, "runnerId": self.runner_id, **body}
         self._post(f"/tasks/{task_id}/complete", payload)

@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from taskhub_runner.cli import build_runner, main
+from taskhub_runner.cli import build_runner, main, run_runner_loop
 
 
 class FakeClient:
@@ -60,7 +60,7 @@ class CliTest(unittest.TestCase):
                   "runnerId": "runner_local",
                   "credential": "secret",
                   "workspaceRoot": "workspaces",
-                  "pollIntervalSeconds": 1,
+                  "fallbackPollIntervalSeconds": 600,
                   "handlerPaths": ["builtin_shell"],
                   "scriptRegistryPath": "scripts.json"
                 }
@@ -92,6 +92,48 @@ class CliTest(unittest.TestCase):
                 exit_code = main(["--config", str(config_path), "--once"], client_factory=FakeClient)
 
             self.assertEqual(exit_code, 0)
+
+    def test_runner_loop_waits_for_wake_with_jittered_fallback(self):
+        class FakeRunner:
+            def __init__(self):
+                self.calls = 0
+
+            def run_once(self):
+                self.calls += 1
+                return False
+
+        class FakeWake:
+            def __init__(self):
+                self.started = False
+                self.stopped = False
+                self.waits = []
+
+            def start(self):
+                self.started = True
+
+            def stop(self):
+                self.stopped = True
+
+            def wait(self, timeout):
+                self.waits.append(timeout)
+                return False
+
+        runner = FakeRunner()
+        wake = FakeWake()
+
+        run_runner_loop(
+            runner,
+            wake,
+            fallback_poll_interval_seconds=600,
+            jitter_ratio=0.1,
+            stop_requested=lambda: bool(wake.waits),
+            random_value=lambda: 1.0,
+        )
+
+        self.assertEqual(runner.calls, 1)
+        self.assertEqual(wake.waits, [660])
+        self.assertTrue(wake.started)
+        self.assertTrue(wake.stopped)
 
 
 if __name__ == "__main__":

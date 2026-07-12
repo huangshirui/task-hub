@@ -220,11 +220,11 @@ test("broadcasts Runner presence when connections open and close", () => {
   assert.equal(runner.attachment, null);
 });
 
-test("fetch upgrades trusted internal Runner and admin connection requests", () => {
+test("fetch upgrades trusted internal Runner and admin connection requests", async () => {
   const pairFactory = createWebSocketPairFactory();
   const { state, hub } = createHub(pairFactory.factory);
 
-  const responses = withUpgradeResponse(() => [
+  const responsePromises = withUpgradeResponse(() => [
     hub.fetch(
       new Request("https://runner-hub.internal/connect", {
         headers: {
@@ -240,6 +240,7 @@ test("fetch upgrades trusted internal Runner and admin connection requests", () 
       }),
     ),
   ]);
+  const responses = await Promise.all(responsePromises);
 
   assert.equal(responses[0]?.status, 101);
   assert.equal(responses[1]?.status, 101);
@@ -255,21 +256,21 @@ test("fetch upgrades trusted internal Runner and admin connection requests", () 
   ]);
 });
 
-test("fetch rejects non-upgrade and untrusted connection metadata", () => {
+test("fetch rejects non-upgrade and untrusted connection metadata", async () => {
   const pairFactory = createWebSocketPairFactory();
   const { hub } = createHub(pairFactory.factory);
 
-  const notUpgrade = hub.fetch(
+  const notUpgrade = await hub.fetch(
     new Request("https://runner-hub.internal/connect", {
       headers: { "x-task-hub-role": "admin" },
     }),
   );
-  const missingRunnerId = hub.fetch(
+  const missingRunnerId = await hub.fetch(
     new Request("https://runner-hub.internal/connect", {
       headers: { upgrade: "websocket", "x-task-hub-role": "runner" },
     }),
   );
-  const unknownRole = hub.fetch(
+  const unknownRole = await hub.fetch(
     new Request("https://runner-hub.internal/connect", {
       headers: { upgrade: "websocket", "x-task-hub-role": "unknown" },
     }),
@@ -299,6 +300,47 @@ test("reports deduplicated online Runner and admin presence from hibernation att
     runnerConnections: 3,
     adminConnections: 1,
   });
+});
+
+test("exposes notifications and presence through the internal fetch boundary", async () => {
+  const { hub } = createHub();
+  const runner = new FakeWebSocket();
+  const admin = new FakeWebSocket();
+  hub.acceptRunner(runner as unknown as WebSocket, "runner-a");
+  hub.acceptAdmin(admin as unknown as WebSocket);
+
+  const wakeResponse = await hub.fetch(new Request("https://runner-hub.internal/task-available", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ runnerId: "runner-a", taskId: "task-1" }),
+  }));
+  const eventResponse = await hub.fetch(new Request("https://runner-hub.internal/admin-event", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "task_changed", taskId: "task-1", runnerId: "runner-a", status: "running" }),
+  }));
+  const presenceResponse = await hub.fetch(new Request("https://runner-hub.internal/presence"));
+
+  assert.deepEqual(await wakeResponse.json(), { delivered: 1 });
+  assert.deepEqual(await eventResponse.json(), { delivered: 1 });
+  assert.deepEqual(await presenceResponse.json(), {
+    onlineRunnerIds: ["runner-a"], runnerConnections: 1, adminConnections: 1,
+  });
+  assert.deepEqual(JSON.parse(runner.sent[0] as string), { type: "task_available", taskId: "task-1" });
+  assert.deepEqual(JSON.parse(admin.sent.at(-1) as string), {
+    type: "task_changed", taskId: "task-1", runnerId: "runner-a", status: "running",
+  });
+});
+
+test("rejects malformed internal Hub events", async () => {
+  const { hub } = createHub();
+  const response = await hub.fetch(new Request("https://runner-hub.internal/admin-event", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "task_changed", taskId: "task-1", runnerId: "runner-a", status: "secret" }),
+  }));
+
+  assert.equal(response.status, 400);
 });
 
 test("bounds Runner tags while preserving exact targeted lookup", () => {

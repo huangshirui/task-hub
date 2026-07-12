@@ -34,7 +34,6 @@ CF_QUEUE_NAME
 CF_D1_DATABASE_NAME
 CF_D1_DATABASE_ID
 CF_R2_BUCKET_NAME
-CF_KV_NAMESPACE_ID
 ```
 
 The deploy workflow generates a temporary `wrangler.toml` from these variables.
@@ -80,3 +79,15 @@ Runner credentials should be injected with `credentialEnv`:
 ```
 
 Then set the environment variable on the machine running the Runner.
+
+Continuous Runners use these timing settings:
+
+```json
+{
+  "fallbackPollIntervalSeconds": 600,
+  "fallbackJitterRatio": 0.1,
+  "heartbeatIntervalSeconds": 20
+}
+```
+
+The Runner normally receives task notifications over a hibernatable WebSocket. The fallback claim runs every 9-11 minutes with the defaults above. `heartbeatIntervalSeconds` applies only while a task is running and renews its 90-second lease.

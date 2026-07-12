@@ -153,6 +153,7 @@ test("runner can only claim tasks explicitly assigned to itself", async () => {
   assert.ok(claim);
   assert.equal(claim.taskId, submitted.taskId);
   assert.equal(claim.type, "shell");
+  assert.equal(claim.leaseExpiresAt, "2026-06-11T00:01:30.000Z");
 });
 
 test("complete uploads result metadata and records a signed webhook delivery", async () => {

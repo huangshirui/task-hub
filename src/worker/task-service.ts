@@ -36,7 +36,7 @@ export class TaskHubService {
     options: TaskHubServiceOptions = {},
   ) {
     this.now = options.now ?? (() => new Date());
-    this.leaseSeconds = options.leaseSeconds ?? 60;
+    this.leaseSeconds = options.leaseSeconds ?? 90;
     this.webhookSecret = options.webhookSecret ?? "dev-webhook-secret";
     this.randomUUID = options.randomUUID ?? (() => crypto.randomUUID());
   }

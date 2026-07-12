@@ -45,6 +45,8 @@ python -m taskhub_runner.platforms.windows.tray
 
 The tray menu exposes status, start, stop, open logs, and exit.
 
+The running tray process keeps one outbound `wss://` connection for task notifications. It claims immediately after a notification, falls back to a jittered claim every 9-11 minutes, and renews the lease every 20 seconds only while a task is executing.
+
 You can still override the config path:
 
 ```powershell

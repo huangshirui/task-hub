@@ -114,6 +114,36 @@ test("wakes the target Runner only after the Queue consumer persists pending_run
   assert.equal(acked, true);
 });
 
+test("default Durable Object adapter sends notifications through stub fetch", async () => {
+  const store = new InMemoryTaskStore();
+  const service = await registerRunner(store);
+  const task = await service.submitTask({
+    runnerId: "runner-a", type: "selfcheck", name: "Wake", payload: {}, timeoutSeconds: 60,
+  });
+  const requests: Request[] = [];
+  const rawStub = {
+    async fetch(request: Request): Promise<Response> {
+      requests.push(request);
+      return new Response(JSON.stringify({ delivered: 1 }), {
+        headers: { "content-type": "application/json" },
+      });
+    },
+  };
+  const env = {
+    ...createEnv(),
+    RUNNER_HUB: {
+      idFromName: (name: string) => name,
+      get: () => rawStub,
+    },
+  };
+  const worker = createWorker(() => store);
+
+  await worker.queue({ messages: [{ body: { taskId: task.taskId }, ack: () => {} }] } as never, env as never);
+
+  assert.deepEqual(requests.map((request) => new URL(request.url).pathname), ["/task-available", "/admin-event"]);
+  assert.deepEqual(await requests[0]?.json(), { runnerId: "runner-a", taskId: task.taskId });
+});
+
 test("broadcasts leased, running, and terminal task transitions", async () => {
   const store = new InMemoryTaskStore();
   const service = await registerRunner(store);

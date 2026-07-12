@@ -331,7 +331,8 @@ const adminDocument = `<!doctype html>
     (function () {
       "use strict";
       var TOKEN_KEY = "taskHubAdminToken";
-      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], selectedRunnerId: "", selectedTaskId: "", taskCursor: "", nextCursor: "", timer: 0, runnerRequestGeneration: 0, taskRequestGeneration: 0, detailRequestGeneration: 0, sessionEpoch: 0, refreshEpoch: -1, refreshPromise: null };
+      var ADMIN_SOCKET_PROTOCOL = "taskhub-admin";
+      var state = { token: sessionStorage.getItem(TOKEN_KEY) || "", runners: [], tasks: [], onlineRunnerIds: new Set(), presenceLoaded: false, selectedRunnerId: "", selectedTaskId: "", taskCursor: "", nextCursor: "", socket: null, reconnectTimer: 0, reconnectAttempt: 0, runnerRequestGeneration: 0, taskRequestGeneration: 0, detailRequestGeneration: 0, sessionEpoch: 0, refreshEpoch: -1, refreshPromise: null };
       var authView = document.getElementById("auth-view");
       var app = document.getElementById("app");
       var authForm = document.getElementById("auth-form");
@@ -357,8 +358,12 @@ const adminDocument = `<!doctype html>
       document.getElementById("run-selfcheck").addEventListener("click", runSelfcheck);
       document.getElementById("next-page").addEventListener("click", function () { state.taskCursor = state.nextCursor; loadTasks(); });
       document.addEventListener("visibilitychange", function () {
-        schedulePolling();
-        if (!document.hidden && state.token) refreshAll();
+        if (document.hidden) {
+          closeRealtime();
+        } else if (state.token) {
+          refreshAll().catch(function () {});
+          connectRealtime();
+        }
       });
 
       function connect() {
@@ -369,7 +374,7 @@ const adminDocument = `<!doctype html>
           if (epoch !== state.sessionEpoch || token !== state.token) return;
           authView.hidden = true;
           app.hidden = false;
-          schedulePolling();
+          connectRealtime();
         }).catch(function (error) {
           if (epoch === state.sessionEpoch && error.message !== "unauthorized") authError.textContent = error.message;
         });
@@ -381,6 +386,8 @@ const adminDocument = `<!doctype html>
         state.token = "";
         state.runners = [];
         state.tasks = [];
+        state.onlineRunnerIds = new Set();
+        state.presenceLoaded = false;
         state.selectedRunnerId = "";
         state.selectedTaskId = "";
         state.taskCursor = "";
@@ -390,7 +397,7 @@ const adminDocument = `<!doctype html>
         state.detailRequestGeneration += 1;
         state.refreshEpoch = -1;
         state.refreshPromise = null;
-        clearTimeout(state.timer);
+        closeRealtime();
         app.hidden = true;
         authView.hidden = false;
         tokenInput.value = "";
@@ -425,8 +432,7 @@ const adminDocument = `<!doctype html>
         var refresh = (async function () {
           setConnection(false, "Refreshing");
           try {
-            await loadRunners();
-            await loadTasks();
+            await Promise.all([loadPresence(), loadRunners(), loadTasks()]);
             if (epoch !== state.sessionEpoch) return;
             setConnection(true, "Connected");
             document.getElementById("last-refresh").textContent = "Updated " + new Date().toLocaleTimeString();
@@ -467,6 +473,15 @@ const adminDocument = `<!doctype html>
         renderRunnerFilter();
       }
 
+      async function loadPresence() {
+        var epoch = state.sessionEpoch;
+        var presence = await api("/api/admin/presence");
+        if (epoch !== state.sessionEpoch) return;
+        state.onlineRunnerIds = new Set(presence.onlineRunnerIds || []);
+        state.presenceLoaded = true;
+        renderRunners();
+      }
+
       async function loadTasks() {
         var generation = ++state.taskRequestGeneration;
         var epoch = state.sessionEpoch;
@@ -502,6 +517,7 @@ const adminDocument = `<!doctype html>
         }
         list.replaceChildren();
         state.runners.forEach(function (runner) {
+          var runnerStatus = state.presenceLoaded ? (state.onlineRunnerIds.has(runner.runnerId) ? "online" : "offline") : runner.status;
           var button = document.createElement("button");
           button.type = "button";
           button.className = "runner-item" + (runner.runnerId === state.selectedRunnerId ? " selected" : "");
@@ -513,12 +529,12 @@ const adminDocument = `<!doctype html>
             loadTasks();
           });
           var bar = document.createElement("span");
-          bar.className = "status-bar " + runner.status;
+          bar.className = "status-bar " + runnerStatus;
           var content = document.createElement("span");
           var title = document.createElement("span");
           title.className = "runner-name";
           title.append(document.createTextNode(runner.name));
-          title.append(makeBadge(runner.status));
+          title.append(makeBadge(runnerStatus));
           var id = document.createElement("div"); id.className = "runner-id"; id.textContent = runner.runnerId;
           var meta = document.createElement("div"); meta.className = "runner-meta";
           meta.append(makeBadge(runner.platform));
@@ -634,8 +650,70 @@ const adminDocument = `<!doctype html>
       }
       function formatTime(value) { return value ? new Date(value).toLocaleString() : "-"; }
       function setConnection(connected, label) { document.getElementById("connection-dot").className = "connection-dot" + (connected ? " connected" : ""); document.getElementById("connection-label").textContent = label; }
-      function poll() { refreshAll().catch(function () {}).finally(schedulePolling); }
-      function schedulePolling() { clearTimeout(state.timer); if (!document.hidden && state.token) state.timer = setTimeout(poll, 5000); }
+
+      function connectRealtime() {
+        if (!state.token || document.hidden || state.socket) return;
+        var epoch = state.sessionEpoch;
+        api("/api/admin/events-ticket", { method: "POST" }).then(function (issued) {
+          if (epoch !== state.sessionEpoch || document.hidden || state.socket) return;
+          var scheme = location.protocol === "https:" ? "wss:" : "ws:";
+          var socket = new WebSocket(scheme + "//" + location.host + "/api/admin/events", [ADMIN_SOCKET_PROTOCOL, issued.ticket]);
+          state.socket = socket;
+          socket.onopen = function () {
+            if (socket !== state.socket || epoch !== state.sessionEpoch) return;
+            state.reconnectAttempt = 0;
+            setConnection(true, "Connected");
+            refreshAll().catch(function () {});
+          };
+          socket.onmessage = function (message) {
+            if (socket !== state.socket || epoch !== state.sessionEpoch) return;
+            handleRealtimeEvent(message.data);
+          };
+          socket.onerror = function () { socket.close(); };
+          socket.onclose = function () {
+            if (socket !== state.socket) return;
+            state.socket = null;
+            scheduleReconnect();
+          };
+        }).catch(function (error) {
+          if (epoch === state.sessionEpoch && error.message !== "unauthorized") scheduleReconnect();
+        });
+      }
+
+      function handleRealtimeEvent(message) {
+        var event;
+        try { event = JSON.parse(message); } catch (_) { return; }
+        if (event.type === "runner_presence_changed" && typeof event.runnerId === "string") {
+          if (event.online) state.onlineRunnerIds.add(event.runnerId); else state.onlineRunnerIds.delete(event.runnerId);
+          state.presenceLoaded = true;
+          renderRunners();
+          return;
+        }
+        if (event.type === "task_changed" && typeof event.taskId === "string") {
+          Promise.all([loadRunners(), loadTasks()]).catch(function () {});
+          if (event.taskId === state.selectedTaskId) selectTask(event.taskId);
+        }
+      }
+
+      function scheduleReconnect() {
+        clearTimeout(state.reconnectTimer);
+        if (!state.token || document.hidden) return;
+        var delays = [1000, 2000, 5000, 10000, 30000, 60000];
+        var delay = delays[Math.min(state.reconnectAttempt, delays.length - 1)];
+        state.reconnectAttempt += 1;
+        setConnection(false, "Reconnecting");
+        state.reconnectTimer = setTimeout(function () { state.reconnectTimer = 0; connectRealtime(); }, delay);
+      }
+
+      function closeRealtime() {
+        clearTimeout(state.reconnectTimer);
+        state.reconnectTimer = 0;
+        if (!state.socket) return;
+        var socket = state.socket;
+        state.socket = null;
+        socket.onclose = null;
+        socket.close();
+      }
 
       if (state.token) connect(); else tokenInput.focus();
     }());

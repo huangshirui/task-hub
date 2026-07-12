@@ -18,7 +18,9 @@ The config defines:
 - `runnerId`: registered Runner ID
 - `credentialEnv`: environment variable containing the Runner credential
 - `workspaceRoot`: per-task workspace parent directory
-- `pollIntervalSeconds`: idle polling interval
+- `fallbackPollIntervalSeconds`: fallback claim interval when no wake notification arrives; defaults to 600 seconds
+- `fallbackJitterRatio`: randomizes fallback claims by the configured ratio; defaults to 0.1
+- `heartbeatIntervalSeconds`: lease-renewal interval while a task is running; defaults to 20 seconds
 - `handlerPaths`: directories containing `handler.json`
 - `scriptRegistryPath`: JSON file containing registered shell scripts
 

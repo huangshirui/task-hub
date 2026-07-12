@@ -20,13 +20,15 @@ When the account already has `runner.json`, rerunning the installer without `--r
 
 The installer:
 
-- installs `git` and `python3`
+- installs `git`, `python3`, and `python3-websocket`
 - creates the local account system user
 - clones or updates the repo at `/opt/task-hub`
 - registers the runner with the Worker for `selfcheck`
 - writes `/etc/task-hub/runners/<account>/runner.json`
 - stores the runner credential in `/etc/task-hub/runners/<account>/runner.env`
 - creates and starts `taskhub-runner@<account>.service`
+
+The service keeps one outbound `wss://` connection to receive task notifications. It claims immediately after a notification and also claims every 9-11 minutes as a recovery path. While executing a task, it sends an HTTPS lease heartbeat every 20 seconds.
 
 Install another account on the same server by changing `--account`; optionally supply a stable `--runner-id`:
 
@@ -102,7 +104,7 @@ Use a fixed install path so the service file can reference stable absolute paths
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git python3
+sudo apt-get install -y git python3 python3-websocket
 
 sudo useradd --system --create-home --user-group --shell /usr/sbin/nologin taskhub
 sudo mkdir -p /opt/task-hub

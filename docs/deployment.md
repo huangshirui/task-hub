@@ -9,12 +9,12 @@ It creates:
 - Cloudflare Queue from `CF_QUEUE_NAME`
 - D1 database from `CF_D1_DATABASE_NAME`
 - R2 bucket from `CF_R2_BUCKET_NAME`
-- KV namespace named `TASK_CACHE`
 
 After bootstrap, copy generated IDs into repository variables:
 
 - `CF_D1_DATABASE_ID`
-- `CF_KV_NAMESPACE_ID`
+
+The Runner connection hub is a SQLite-backed Durable Object declared in `wrangler.toml`. Wrangler creates it from migration tag `v1` during the first deployment; it does not require a separately created resource ID.
 
 ## Deploy Worker
 
@@ -27,6 +27,8 @@ It performs:
 3. Generate `wrangler.toml` from GitHub Variables
 4. `wrangler d1 migrations apply <CF_D1_DATABASE_NAME> --remote`
 5. `wrangler deploy`
+
+The Worker deploy includes the `RUNNER_HUB` Durable Object binding and its migration. Do not remove or rename an applied Durable Object migration tag. A rollback should deploy an earlier compatible Worker version while retaining the Durable Object class and migration history.
 
 ## Worker Secret
 
@@ -53,6 +55,6 @@ npx wrangler d1 migrations apply <database-name> --remote
 npx wrangler deploy
 ```
 
-After deployment, open `https://<worker-host>/admin` and use `TASK_HUB_ADMIN_TOKEN` to verify Runner discovery, online state, task submission, status, results, and logs.
+After deployment, open `https://<worker-host>/admin` and use `TASK_HUB_ADMIN_TOKEN` to verify Runner discovery and WebSocket presence. Submit a `selfcheck` task to a connected Runner and verify that it moves through `pending_runner`, `leased`, `running`, and `succeeded` without waiting for the 10-minute fallback claim.
 
 `wrangler.toml` is intentionally ignored because it contains account-specific resource bindings.

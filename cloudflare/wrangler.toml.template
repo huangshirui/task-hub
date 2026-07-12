@@ -19,6 +19,10 @@ migrations_dir = "cloudflare/migrations"
 binding = "TASK_OBJECTS"
 bucket_name = "{{CF_R2_BUCKET_NAME}}"
 
-[[kv_namespaces]]
-binding = "TASK_CACHE"
-id = "{{CF_KV_NAMESPACE_ID}}"
+[[durable_objects.bindings]]
+name = "RUNNER_HUB"
+class_name = "RunnerHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RunnerHub"]

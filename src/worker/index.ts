@@ -76,7 +76,7 @@ export function createWorker(
   storeFactory: StoreFactory = (env) => new D1TaskStore(env.TASK_DB, env.TASK_SUBMISSIONS, env.TASK_OBJECTS),
   hubFactory: HubFactory = (env) => {
     const id = env.RUNNER_HUB.idFromName(HUB_INSTANCE_NAME);
-    return env.RUNNER_HUB.get(id) as unknown as RunnerHubStub;
+    return durableObjectHubStub(env.RUNNER_HUB.get(id));
   },
 ) {
   return {
@@ -278,6 +278,40 @@ async function handleAdminRequest(
   }
 
   return json({ error: "not found" }, 404);
+}
+
+function durableObjectHubStub(stub: DurableObjectStub): RunnerHubStub {
+  return {
+    fetch: (request) => stub.fetch(request),
+    notifyTaskAvailable: async (runnerId, taskId) => {
+      const response = await stub.fetch(internalHubRequest("/task-available", { runnerId, taskId }));
+      return await deliveredCount(response);
+    },
+    broadcastAdminEvent: async (event) => {
+      const response = await stub.fetch(internalHubRequest("/admin-event", event));
+      return await deliveredCount(response);
+    },
+    getPresence: async () => {
+      const response = await stub.fetch(new Request("https://runner-hub.internal/presence"));
+      if (!response.ok) throw new Error(`Runner Hub presence failed: ${response.status}`);
+      return await response.json() as RunnerHubPresence;
+    },
+  };
+}
+
+function internalHubRequest(path: string, body: unknown): Request {
+  return new Request(`https://runner-hub.internal${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function deliveredCount(response: Response): Promise<number> {
+  if (!response.ok) throw new Error(`Runner Hub notification failed: ${response.status}`);
+  const body = await response.json() as { delivered?: unknown };
+  if (typeof body.delivered !== "number") throw new Error("Runner Hub returned an invalid response");
+  return body.delivered;
 }
 
 function adminSocketTicket(request: Request): string {

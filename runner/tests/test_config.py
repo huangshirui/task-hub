@@ -20,7 +20,8 @@ class RunnerConfigTest(unittest.TestCase):
                   "runnerId": "runner_local",
                   "credentialEnv": "TASK_HUB_RUNNER_TOKEN",
                   "workspaceRoot": "workspaces",
-                  "pollIntervalSeconds": 2,
+                  "fallbackPollIntervalSeconds": 600,
+                  "heartbeatIntervalSeconds": 20,
                   "handlerPaths": ["handlers"],
                   "scriptRegistryPath": "scripts.json"
                 }
@@ -35,7 +36,8 @@ class RunnerConfigTest(unittest.TestCase):
             self.assertEqual(config.runner_id, "runner_local")
             self.assertEqual(config.credential, "secret")
             self.assertEqual(config.workspace_root, workspace)
-            self.assertEqual(config.poll_interval_seconds, 2)
+            self.assertEqual(config.fallback_poll_interval_seconds, 600)
+            self.assertEqual(config.heartbeat_interval_seconds, 20)
             self.assertEqual(config.handler_paths, [handlers])
             self.assertEqual(config.script_registry_path, scripts)
 
@@ -74,6 +76,28 @@ class RunnerConfigTest(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "credential or credentialEnv is required"):
                 load_runner_config(config_path)
+
+    def test_load_runner_config_rejects_invalid_timing_values(self):
+        invalid_values = (
+            ('"fallbackPollIntervalSeconds": 0', "fallbackPollIntervalSeconds must be greater than 0"),
+            ('"heartbeatIntervalSeconds": -1', "heartbeatIntervalSeconds must be greater than 0"),
+            ('"fallbackJitterRatio": 1.1', "fallbackJitterRatio must be between 0 and 1"),
+        )
+        for field, message in invalid_values:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as tmp:
+                config_path = Path(tmp) / "runner.json"
+                config_path.write_text(
+                    f'''{{
+                      "baseUrl": "https://task-hub.example.workers.dev",
+                      "runnerId": "runner_local",
+                      "credential": "secret",
+                      {field}
+                    }}''',
+                    encoding="utf-8",
+                )
+
+                with self.assertRaisesRegex(ValueError, message):
+                    load_runner_config(config_path)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import threading
-import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Literal
+
+from ...loop import run_runner_loop
 
 
 RunnerStatus = Literal["stopped", "running", "stopping", "error"]
@@ -14,14 +15,16 @@ class RunnerLoopController:
     def __init__(
         self,
         runner: Any,
-        poll_interval_seconds: float,
+        wake_listener: Any,
+        fallback_poll_interval_seconds: float,
         log_path: Path,
-        sleeper: Callable[[float], None] = time.sleep,
+        jitter_ratio: float = 0.1,
     ):
         self._runner = runner
-        self._poll_interval_seconds = poll_interval_seconds
+        self._wake_listener = wake_listener
+        self._fallback_poll_interval_seconds = fallback_poll_interval_seconds
+        self._jitter_ratio = jitter_ratio
         self._log_path = log_path
-        self._sleeper = sleeper
         self._lock = threading.Lock()
         self._stop_requested = threading.Event()
         self._thread: threading.Thread | None = None
@@ -48,6 +51,7 @@ class RunnerLoopController:
             if self._status == "running":
                 self._status = "stopping"
             self._stop_requested.set()
+            self._wake_listener.interrupt()
             thread = self._thread
         if thread is not None:
             thread.join(timeout=timeout_seconds)
@@ -66,10 +70,13 @@ class RunnerLoopController:
 
     def _run_loop(self) -> None:
         try:
-            while not self._stop_requested.is_set():
-                did_work = self._runner.run_once()
-                if not did_work:
-                    self._sleeper(self._poll_interval_seconds)
+            run_runner_loop(
+                self._runner,
+                self._wake_listener,
+                fallback_poll_interval_seconds=self._fallback_poll_interval_seconds,
+                jitter_ratio=self._jitter_ratio,
+                stop_requested=self._stop_requested.is_set,
+            )
         except Exception:
             self._record_exception()
             with self._lock:

@@ -113,7 +113,7 @@ done
 if command -v apt-get >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y git python3
+  apt-get install -y git python3 python3-websocket
 else
   command -v git >/dev/null 2>&1 || die "git is required"
   command -v python3 >/dev/null 2>&1 || die "python3 is required"
@@ -256,7 +256,9 @@ config = {
     "runnerId": runner_id,
     "credentialEnv": "TASK_HUB_RUNNER_TOKEN",
     "workspaceRoot": workspace_dir,
-    "pollIntervalSeconds": 5,
+    "fallbackPollIntervalSeconds": 600,
+    "fallbackJitterRatio": 0.1,
+    "heartbeatIntervalSeconds": 20,
     "handlerPaths": [str(install_dir / "runner" / "handlers" / "builtin_selfcheck")],
     "scriptRegistryPath": scripts_path,
 }

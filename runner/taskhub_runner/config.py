@@ -12,7 +12,9 @@ class RunnerConfig:
     runner_id: str
     credential: str
     workspace_root: Path
-    poll_interval_seconds: float = 5.0
+    fallback_poll_interval_seconds: float = 600.0
+    heartbeat_interval_seconds: float = 20.0
+    fallback_jitter_ratio: float = 0.1
     handler_paths: list[Path] = field(default_factory=list)
     script_registry_path: Path | None = None
 
@@ -42,12 +44,20 @@ def load_runner_config(path: Path) -> RunnerConfig:
             resolved_script_registry_path = base_dir / resolved_script_registry_path
         resolved_script_registry_path = resolved_script_registry_path.resolve()
 
+    fallback_poll_interval_seconds = _positive_number(raw, "fallbackPollIntervalSeconds", 600)
+    heartbeat_interval_seconds = _positive_number(raw, "heartbeatIntervalSeconds", 20)
+    fallback_jitter_ratio = float(raw.get("fallbackJitterRatio", 0.1))
+    if not 0 <= fallback_jitter_ratio <= 1:
+        raise ValueError("fallbackJitterRatio must be between 0 and 1")
+
     return RunnerConfig(
         base_url=_required_string(raw, "baseUrl"),
         runner_id=_required_string(raw, "runnerId"),
         credential=_load_credential(raw),
         workspace_root=workspace_root,
-        poll_interval_seconds=float(raw.get("pollIntervalSeconds", 5)),
+        fallback_poll_interval_seconds=fallback_poll_interval_seconds,
+        heartbeat_interval_seconds=heartbeat_interval_seconds,
+        fallback_jitter_ratio=fallback_jitter_ratio,
         handler_paths=handler_paths,
         script_registry_path=resolved_script_registry_path,
     )
@@ -57,6 +67,13 @@ def _required_string(raw: dict, key: str) -> str:
     value = raw.get(key)
     if not isinstance(value, str) or not value:
         raise ValueError(f"{key} is required")
+    return value
+
+
+def _positive_number(raw: dict, key: str, default: float) -> float:
+    value = float(raw.get(key, default))
+    if value <= 0:
+        raise ValueError(f"{key} must be greater than 0")
     return value
 
 

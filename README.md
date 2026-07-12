@@ -1,6 +1,6 @@
 # Task Hub
 
-Task Hub is a Cloudflare-hosted asynchronous task execution platform. External systems submit tasks to the Worker API and specify the exact `runnerId` that must execute the task. A Linux or Windows Runner polls Cloudflare over outbound HTTPS, claims only its own tasks, executes a locally registered handler, and reports logs, status, and results back to Cloudflare.
+Task Hub is a Cloudflare-hosted asynchronous task execution platform. External systems submit tasks to the Worker API and specify the exact `runnerId` that must execute the task. A Linux or Windows Runner keeps an outbound WebSocket for wake notifications, claims only its own tasks over HTTPS, executes a locally registered handler, and reports logs, status, and results back to Cloudflare.
 
 The repository is split into three layers:
 
@@ -14,22 +14,36 @@ The repository is split into three layers:
 - **Cloudflare Queues:** submission buffer. The Worker enqueues accepted tasks; the Queue consumer moves them into `pending_runner` after validation.
 - **D1:** task, runner, attempt, and webhook delivery metadata.
 - **R2:** log batches and large result artifacts.
-- **KV:** configured in `wrangler.toml` for short-lived tokens and low-consistency cache use.
-- **Runner:** Python daemon/service that uses only outbound HTTPS.
+- **Durable Object:** one global hibernatable WebSocket hub for Runner wake notifications, live presence, and admin events.
+- **Runner:** Python daemon/service that uses only outbound HTTPS/WSS.
 - **Task Handler:** local Runner plugins. Ubuntu installs enable `selfcheck` by default; task-specific handlers such as registered-script Shell are installed on demand.
-- **Admin Console:** the Worker-hosted `/admin` page lists runners and tasks, derives online state from authenticated polling, reads task logs, and submits `selfcheck` tasks.
+- **Admin Console:** the Worker-hosted `/admin` page lists runners and tasks, receives presence/task changes over WebSocket, reads task logs, and submits `selfcheck` tasks.
+
+```mermaid
+flowchart LR
+  Client["Client / Admin"] -->|"HTTPS"| Worker["Cloudflare Worker"]
+  Worker --> Queue["One Cloudflare Queue"]
+  Queue --> Consumer["Queue consumer"]
+  Consumer --> D1["D1: task source of truth"]
+  Consumer --> Hub["Durable Object: Runner Hub"]
+  Hub -->|"task_available over WSS"| Runner["Linux / Windows Runner"]
+  Runner -->|"claim, heartbeat, logs, complete over HTTPS"| Worker
+  Worker --> D1
+  Worker --> R2["R2: logs / artifacts"]
+  Hub -->|"presence and task events over WSS"| Admin["Admin Console"]
+```
 
 ## Task Flow
 
 1. Client calls `POST /tasks` with a required `runnerId`.
 2. Worker stores the task as `queued` and sends `{ taskId }` to Cloudflare Queues.
 3. Queue consumer validates the target Runner and task type.
-4. Valid work moves to `pending_runner`; offline Runner work waits for that Runner.
-5. Runner calls `POST /runners/:runnerId/claim` with its bearer credential.
-6. Worker returns a lease only for tasks assigned to that Runner.
-7. Runner executes the handler in a per-task workspace.
+4. Valid work moves to `pending_runner`, then the consumer sends `task_available` to the target Runner through the Durable Object hub.
+5. The notified Runner calls `POST /runners/:runnerId/claim` with its bearer credential. A 9-11 minute fallback claim recovers missed notifications.
+6. Worker returns a 90-second lease only for tasks assigned to that Runner.
+7. Runner executes the handler in a per-task workspace and renews the lease every 20 seconds.
 8. Runner uploads logs and calls `POST /tasks/:taskId/complete`.
-9. Worker records terminal state and creates a signed webhook delivery record when `callbackUrl` is present.
+9. Worker records terminal state, broadcasts the change to admin connections, and creates a signed webhook delivery record when `callbackUrl` is present.
 
 ## API Shape
 
@@ -83,9 +97,12 @@ GET  /api/admin/tasks
 POST /api/admin/tasks
 GET  /api/admin/tasks/:taskId
 GET  /api/admin/tasks/:taskId/logs
+POST /api/admin/events-ticket
+GET  /api/admin/events
+GET  /api/admin/presence
 ```
 
-Runner status is derived from the last authenticated claim or task heartbeat: `online` through 15 seconds, `stale` through 60 seconds, and `offline` after 60 seconds or before the first heartbeat.
+The Admin Console uses the Durable Object's live WebSocket presence as the authoritative online indicator. Stored `online`/`stale`/`offline` values remain available as last-activity information when no live presence snapshot is available.
 
 Handler manifest:
 
@@ -153,7 +170,7 @@ Ubuntu one-line installs enable the `selfcheck` handler first. Install the `shel
 
 ## Cloudflare Setup
 
-1. Create a D1 database, R2 bucket, KV namespace, and Queue.
+1. Create a D1 database, R2 bucket, and Queue. The first Worker deploy creates the SQLite-backed Durable Object class from migration tag `v1`.
 2. Copy `cloudflare/wrangler.toml.template` to `wrangler.toml` for local deploys and replace placeholders.
 3. Apply all D1 migrations in `cloudflare/migrations`.
 4. Set `WEBHOOK_SECRET`, `RUNNER_REGISTRATION_TOKEN`, and `TASK_HUB_ADMIN_TOKEN` as Worker secrets.
@@ -186,7 +203,7 @@ The deploy workflow publishes `WEBHOOK_SECRET`, `RUNNER_REGISTRATION_TOKEN`, and
 
 The repository includes two workflows:
 
-- `.github/workflows/bootstrap-cloudflare.yml`: manually creates the Queue, D1 database, R2 bucket, and KV namespace named by GitHub Variables.
+- `.github/workflows/bootstrap-cloudflare.yml`: manually creates the Queue, D1 database, and R2 bucket named by GitHub Variables.
 - `.github/workflows/deploy-worker.yml`: on pushes to `main`, generates `wrangler.toml` from GitHub Variables, runs `npm ci`, `npm test`, applies D1 migrations, and deploys the Worker.
 
 After running the bootstrap workflow, copy resource names and IDs into GitHub Variables. The bootstrap workflow is intentionally manual because Cloudflare resource creation commands are not meant to run on every push.
