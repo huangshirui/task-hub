@@ -117,17 +117,6 @@ export function createWorker(
           return await handleAdminRequest(request, url, service, hub);
         }
 
-        if (request.method === "POST" && url.pathname === "/tasks") {
-          const task = await service.submitTask(await parseJson<SubmitTaskInput>(request));
-          return json({ taskId: task.taskId, status: task.status }, 202);
-        }
-
-        const taskMatch = url.pathname.match(/^\/tasks\/([^/]+)$/);
-        if (request.method === "GET" && taskMatch) {
-          const task = await service.getTaskForAdmin(taskMatch[1] as string);
-          return task ? json(task) : json({ error: "not found" }, 404);
-        }
-
         if (request.method === "POST" && url.pathname === "/runners/register") {
           if (!env.RUNNER_REGISTRATION_TOKEN) {
             return json({ error: "runner registration is disabled" }, 401);

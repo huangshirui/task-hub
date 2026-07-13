@@ -1,6 +1,6 @@
 # Task Hub
 
-Task Hub is a Cloudflare-hosted asynchronous task execution platform. External systems submit tasks to the Worker API and specify the exact `runnerId` that must execute the task. A Linux or Windows Runner keeps an outbound WebSocket for wake notifications, claims only its own tasks over HTTPS, executes a locally registered handler, and reports logs, status, and results back to Cloudflare.
+Task Hub is a Cloudflare-hosted asynchronous task execution platform. Operator-controlled clients submit tasks through the authenticated management API and specify the exact `runnerId` that must execute the task. A Linux or Windows Runner keeps an outbound WebSocket for wake notifications, claims only its own tasks over HTTPS, executes a locally registered handler, and reports logs, status, and results back to Cloudflare.
 
 The repository is split into three layers:
 
@@ -10,7 +10,8 @@ The repository is split into three layers:
 
 ## Architecture
 
-- **Task API:** Cloudflare Worker TypeScript endpoints for submit, query, runner registration, claim, heartbeat, logs, and completion.
+- **Management API:** authenticated Cloudflare Worker endpoints under `/api/admin/*` for task submission, queries, Runner discovery, and live presence.
+- **Runner protocol:** credential-authenticated endpoints for registration, claim, heartbeat, log upload, and completion.
 - **Cloudflare Queues:** submission buffer. The Worker enqueues accepted tasks; the Queue consumer moves them into `pending_runner` after validation.
 - **D1:** task, runner, attempt, and webhook delivery metadata.
 - **R2:** log batches and large result artifacts.
@@ -21,7 +22,7 @@ The repository is split into three layers:
 
 ```mermaid
 flowchart LR
-  Client["Client / Admin"] -->|"HTTPS"| Worker["Cloudflare Worker"]
+  Client["Admin Console / Automation"] -->|"Authenticated HTTPS"| Worker["Cloudflare Worker"]
   Worker --> Queue["One Cloudflare Queue"]
   Queue --> Consumer["Queue consumer"]
   Consumer --> D1["D1: task source of truth"]
@@ -35,7 +36,7 @@ flowchart LR
 
 ## Task Flow
 
-1. Client calls `POST /tasks` with a required `runnerId`.
+1. The Admin Console or an automation client calls authenticated `POST /api/admin/tasks` with a required `runnerId`.
 2. Worker stores the task as `queued` and sends `{ taskId }` to Cloudflare Queues.
 3. Queue consumer validates the target Runner and task type.
 4. Valid work moves to `pending_runner`, then the consumer sends `task_available` to the target Runner through the Durable Object hub.
@@ -47,7 +48,15 @@ flowchart LR
 
 ## API Shape
 
-Submit:
+User-side task submission and queries use only `/api/admin/tasks*`. The Admin Console and automation clients send the same Worker secret on every request:
+
+```http
+Authorization: Bearer <TASK_HUB_ADMIN_TOKEN>
+```
+
+The Runner lifecycle routes under `/runners/*` and `/tasks/:taskId/heartbeat|logs|complete` are a separate machine protocol authenticated with Runner credentials.
+
+Submit with `POST /api/admin/tasks`:
 
 ```json
 {

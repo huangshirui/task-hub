@@ -10,9 +10,9 @@ test("admin endpoints require the independent admin token", async () => {
   const worker = createWorker(() => store);
   const env = createEnv();
 
-  const missing = await worker.fetch(new Request("https://task-hub.example/api/admin/runners"), env as never);
+  const missing = await worker.fetch(new Request("https://task-hub.example/api/admin/tasks"), env as never);
   const wrong = await worker.fetch(
-    new Request("https://task-hub.example/api/admin/runners", {
+    new Request("https://task-hub.example/api/admin/tasks", {
       headers: { authorization: "Bearer wrong-secret" },
     }),
     env as never,
@@ -22,6 +22,51 @@ test("admin endpoints require the independent admin token", async () => {
   assert.equal(wrong.status, 401);
   assert.deepEqual(await missing.json(), { error: "unauthorized" });
   assert.deepEqual(await wrong.json(), { error: "unauthorized" });
+});
+
+test("legacy public task submission is not exposed", async () => {
+  const store = new InMemoryTaskStore();
+  const worker = createWorker(() => store);
+
+  const response = await worker.fetch(
+    new Request("https://task-hub.example/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        runnerId: "runner-a",
+        type: "selfcheck",
+        name: "Legacy submission",
+        payload: {},
+        timeoutSeconds: 60,
+      }),
+    }),
+    createEnv() as never,
+  );
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "not found" });
+  assert.equal(store.tasks.size, 0);
+  assert.deepEqual(store.enqueuedTaskIds, []);
+});
+
+test("legacy public task query is not exposed", async () => {
+  const store = new InMemoryTaskStore();
+  const task = await new TaskHubService(store).submitTask({
+    runnerId: "runner-a",
+    type: "selfcheck",
+    name: "Existing task",
+    payload: {},
+    timeoutSeconds: 60,
+  });
+  const worker = createWorker(() => store);
+
+  const response = await worker.fetch(
+    new Request(`https://task-hub.example/tasks/${task.taskId}`),
+    createEnv() as never,
+  );
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "not found" });
 });
 
 test("admin API lists runners and submits and filters tasks", async () => {
@@ -59,11 +104,18 @@ test("admin API lists runners and submits and filters tasks", async () => {
     env as never,
   );
   assert.equal(submitted.status, 202);
+  const submittedTask = (await submitted.json()) as { taskId: string; status: string };
+  assert.match(submittedTask.taskId, /^task_/);
+  assert.equal(submittedTask.status, "queued");
 
   const tasks = await worker.fetch(adminRequest("/api/admin/tasks?runnerId=runner-a&status=queued"), env as never);
   assert.equal(tasks.status, 200);
   const taskPage = (await tasks.json()) as { items: Array<{ runnerId: string; status: string }> };
   assert.deepEqual(taskPage.items.map((task) => [task.runnerId, task.status]), [["runner-a", "queued"]]);
+
+  const detail = await worker.fetch(adminRequest(`/api/admin/tasks/${submittedTask.taskId}`), env as never);
+  assert.equal(detail.status, 200);
+  assert.equal(((await detail.json()) as { taskId: string }).taskId, submittedTask.taskId);
 });
 
 test("admin API validates filters and returns not found for missing resources", async () => {
