@@ -297,6 +297,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+chmod 755 "$INSTALL_DIR/runner/platforms/ubuntu_server/update.sh"
 systemctl daemon-reload
 systemctl enable --now "$SERVICE_NAME@$ACCOUNT"
 

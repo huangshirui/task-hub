@@ -58,3 +58,14 @@ npx wrangler deploy
 After deployment, open `https://<worker-host>/admin` and use `TASK_HUB_ADMIN_TOKEN` to verify Runner discovery and WebSocket presence. Submit a `selfcheck` task to a connected Runner and verify that it moves through `pending_runner`, `leased`, `running`, and `succeeded` without waiting for the 10-minute fallback claim.
 
 `wrangler.toml` is intentionally ignored because it contains account-specific resource bindings.
+
+## Upgrade Ubuntu Runners
+
+Upgrade the shared Runner checkout with an immutable release tag, then let the updater validate and restart every account instance:
+
+```bash
+sudo /opt/task-hub/runner/platforms/ubuntu_server/update.sh --version v0.2.0 --dry-run
+sudo /opt/task-hub/runner/platforms/ubuntu_server/update.sh --version v0.2.0
+```
+
+Do not use `install.sh` for upgrades. The updater preserves account-scoped identities, credentials, configuration, workspaces, permissions, and Handler selections and automatically rolls back on failure. See `runner/platforms/ubuntu_server/README.md` for commit-based upgrades and custom install paths.

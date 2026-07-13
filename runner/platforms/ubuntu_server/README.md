@@ -75,6 +75,34 @@ View logs after installation:
 journalctl -u taskhub-runner@taskhub -f
 ```
 
+## Update all runners on a server
+
+All account instances share the code in `/opt/task-hub`, so update that checkout once with the dedicated updater. Do not rerun `install.sh` to upgrade: the installer performs registration and rewrites account configuration.
+
+Use an immutable release tag for normal production upgrades:
+
+```bash
+sudo /opt/task-hub/runner/platforms/ubuntu_server/update.sh --version v0.2.0
+```
+
+Preview discovery and compatibility checks without stopping services or changing files:
+
+```bash
+sudo /opt/task-hub/runner/platforms/ubuntu_server/update.sh --version v0.2.0 --dry-run
+```
+
+An audited tag or commit SHA can be selected explicitly, and non-default installations can supply their shared checkout:
+
+```bash
+sudo /opt/task-hub/runner/platforms/ubuntu_server/update.sh \
+  --ref 0123456789abcdef \
+  --install-dir /srv/task-hub
+```
+
+The updater discovers every `/etc/task-hub/runners/<account>/runner.json`, backs up account configuration and repository-managed installed handlers, stops the instances, installs Ubuntu dependencies, switches the shared checkout, refreshes only handlers under each account's `installed-handlers` directory, validates each configuration with its own `runner.env`, and restores the previously enabled services. Built-in handlers under `/opt/task-hub/runner/handlers` update with the shared checkout. Handler paths outside both the account's managed directory and the shared built-in catalog are treated as custom and are never changed.
+
+If dependency installation, handler validation, or service health checks fail, the updater restores the previous Git SHA and managed handlers and restarts the previously enabled services. It does not register runners, change Runner IDs, rewrite credentials, or print credential values.
+
 ## Install handlers
 
 The default runner only accepts `selfcheck` tasks. Install additional handlers on demand:
